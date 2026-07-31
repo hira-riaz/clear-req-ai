@@ -1,0 +1,11 @@
+id,text,expected_ambiguous_terms
+1,"The system should be fast.","fast"
+2,"Users can manage their accounts.","manage"
+3,"The system must be secure.","secure"
+4,"The login page shall load within 2 seconds.",""
+5,"The system should be easy to use.","easy"
+6,"The system shall encrypt all stored passwords using AES-256.",""
+7,"The application should support multiple users.","support"
+8,"The system should handle errors gracefully.","handle"
+9,"The dashboard shall display the last 10 transactions.",""
+10,"The system should be flexible enough for future changes.","flexible"
