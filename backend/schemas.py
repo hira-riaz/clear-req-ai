@@ -1,12 +1,39 @@
-from datetime import datetime
-from typing import List, Optional
+"""
+Pydantic request/response schemas — API input shapes only.
+
+These mirror the ER diagram (docs/diagram_erd.png): Requirement holds no
+version field directly (version numbers live on RequirementVersion, a
+separate table, so history is never overwritten). Category lives on
+Ambiguity, not Clarification. See context/architecture-context.md for the
+full schema reasoning.
+"""
+import datetime
 
 from pydantic import BaseModel
 
 
-class ProjectCreate(BaseModel):
-    name: str
+class RequirementIn(BaseModel):
+    """Input for POST /requirements/analyze"""
+    session_id: int
+    text: str
 
+
+class ClarificationAnswer(BaseModel):
+    """One answer within a translate request"""
+    ambiguity_id: int
+    answer: str
+
+
+class TranslateRequest(BaseModel):
+    """Input for POST /requirements/translate"""
+    requirement_id: int
+    answers: list[ClarificationAnswer]
+
+
+class SessionIn(BaseModel):
+    """Input for POST /sessions"""
+    project_name: str
+    client_name: str | None = None
 
 class ProjectOut(BaseModel):
     id: int
@@ -16,48 +43,3 @@ class ProjectOut(BaseModel):
     class Config:
         from_attributes = True
 
-
-class SessionCreate(BaseModel):
-    project_id: int
-
-
-class SessionOut(BaseModel):
-    id: int
-    project_id: int
-    started_at: datetime
-    ended_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
-class RequirementCreate(BaseModel):
-    session_id: int
-    original_text: str
-
-
-class ClarificationOut(BaseModel):
-    id: int
-    category: str
-    question: str
-    answer: Optional[str] = None
-    confidence: float
-
-    class Config:
-        from_attributes = True
-
-
-class RequirementOut(BaseModel):
-    id: int
-    session_id: int
-    original_text: str
-    status: str
-    version: int
-    clarifications: List[ClarificationOut] = []
-
-    class Config:
-        from_attributes = True
-
-
-class AnswerIn(BaseModel):
-    answer: str

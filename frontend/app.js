@@ -1,47 +1,80 @@
-// Backend base URL — change if you deploy the backend elsewhere.
 const API_BASE = "http://127.0.0.1:8000";
 
-// For the MVP we hardcode a session id. Replace with real session creation
-// once the "Start session" screen from the workflow diagram is built.
-const SESSION_ID = 1;
-
+let currentSessionId = null;
 let currentRequirementId = null;
-let currentAmbiguities = [];
+let requirementCount = 0;
+
+const startCard = document.getElementById("startCard");
+const mainCard = document.getElementById("mainCard");
+const reviewCard = document.getElementById("reviewCard");
+const reportCard = document.getElementById("reportCard");
+
+const projectNameInput = document.getElementById("projectNameInput");
+const startSessionBtn = document.getElementById("startSessionBtn");
+const projectLabel = document.getElementById("projectLabel");
+const reqCounterLabel = document.getElementById("reqCounterLabel");
 
 const analyzeBtn = document.getElementById("analyzeBtn");
-const translateBtn = document.getElementById("translateBtn");
 const requirementInput = document.getElementById("requirementInput");
 const ambiguitiesSection = document.getElementById("ambiguitiesSection");
+const ambiguitiesLabel = document.getElementById("ambiguitiesLabel");
 const ambiguitiesList = document.getElementById("ambiguitiesList");
-const resultSection = document.getElementById("resultSection");
-const translatedText = document.getElementById("translatedText");
-const confidenceBadge = document.getElementById("confidenceBadge");
+const nextReqBtn = document.getElementById("nextReqBtn");
+const finishBtn = document.getElementById("finishBtn");
+const exportDocBtn = document.getElementById("exportDocBtn");
+
+const reviewList = document.getElementById("reviewList");
+const reviewProjectLabel = document.getElementById("reviewProjectLabel");
+const generateReportBtn = document.getElementById("generateReportBtn");
+
+const reportDoc = document.getElementById("reportDoc");
+const newSessionBtn = document.getElementById("newSessionBtn");
+
+startSessionBtn.addEventListener("click", async () => {
+  const name = projectNameInput.value.trim();
+  if (!name) return;
+  startSessionBtn.disabled = true;
+  startSessionBtn.textContent = "Starting...";
+  try {
+    const res = await fetch(`${API_BASE}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_name: name }),
+    });
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data = await res.json();
+    currentSessionId = data.session_id;
+    projectLabel.textContent = data.project_name;
+    startCard.classList.add("hidden");
+    mainCard.classList.remove("hidden");
+  } catch (err) {
+    alert(`Could not start a session. Is the backend running at ${API_BASE}?\n\n${err}`);
+  } finally {
+    startSessionBtn.disabled = false;
+    startSessionBtn.textContent = "Start session";
+  }
+});
 
 analyzeBtn.addEventListener("click", async () => {
   const text = requirementInput.value.trim();
-  if (!text) return;
-
+  if (!text || !currentSessionId) return;
   analyzeBtn.disabled = true;
   analyzeBtn.textContent = "Analyzing...";
-
   try {
     const res = await fetch(`${API_BASE}/requirements/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: SESSION_ID, text }),
+      body: JSON.stringify({ session_id: currentSessionId, text }),
     });
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     const data = await res.json();
-
     currentRequirementId = data.requirement_id;
-    currentAmbiguities = data.ambiguities;
     renderAmbiguities(data.ambiguities);
-    resultSection.classList.add("hidden");
     ambiguitiesSection.classList.remove("hidden");
   } catch (err) {
-    alert(`Could not reach the backend. Is it running at ${API_BASE}?\n\n${err}`);
-  } finally {
+    alert(`Could not reach the backend.\n\n${err}`);
     analyzeBtn.disabled = false;
+  } finally {
     analyzeBtn.textContent = "Analyze";
   }
 });
@@ -49,41 +82,35 @@ analyzeBtn.addEventListener("click", async () => {
 function renderAmbiguities(ambiguities) {
   ambiguitiesList.innerHTML = "";
   if (ambiguities.length === 0) {
-    ambiguitiesList.innerHTML = "<p style='font-size:13px;color:#7a776c;'>No ambiguities detected.</p>";
+    ambiguitiesLabel.textContent = "No ambiguities or conflicts detected";
     return;
   }
+  ambiguitiesLabel.textContent = "Ambiguities detected";
   ambiguities.forEach((a) => {
+    const isConflict = a.category === "conflict";
     const div = document.createElement("div");
-    div.className = "ambiguity-card";
+    div.className = isConflict ? "ambiguity-card conflict-card" : "ambiguity-card";
     div.innerHTML = `
       <div class="ambiguity-top">
-        <span class="term">"${a.term}"</span>
-        <span class="category">${a.category} · ${a.detector}</span>
+        <span class="term">${isConflict ? "⚠ Conflict detected" : `"${a.term}"`}</span>
+        <span class="category ${isConflict ? "conflict" : ""}">${a.category}</span>
       </div>
       <p class="question">${a.question}</p>
-      <input class="answer-input" data-ambiguity-id="${a.ambiguity_id}" placeholder="Your answer..." />
+      ${a.suggested_answer ? '<p class="reused-note">Reused from an earlier answer in this session — edit if this instance is different.</p>' : ""}
+      <input class="answer-input" data-ambiguity-id="${a.ambiguity_id}" placeholder="Your answer..." value="${a.suggested_answer ? a.suggested_answer.replace(/"/g, '&quot;') : ""}" />
     `;
     ambiguitiesList.appendChild(div);
   });
 }
 
-translateBtn.addEventListener("click", async () => {
+nextReqBtn.addEventListener("click", async () => {
   const inputs = ambiguitiesList.querySelectorAll(".answer-input");
   const answers = Array.from(inputs)
-    .map((el) => ({
-      ambiguity_id: parseInt(el.dataset.ambiguityId, 10),
-      answer: el.value.trim(),
-    }))
+    .map((el) => ({ ambiguity_id: parseInt(el.dataset.ambiguityId, 10), answer: el.value.trim() }))
     .filter((a) => a.answer.length > 0);
 
-  if (answers.length === 0) {
-    alert("Answer at least one clarification before translating.");
-    return;
-  }
-
-  translateBtn.disabled = true;
-  translateBtn.textContent = "Translating...";
-
+  nextReqBtn.disabled = true;
+  nextReqBtn.textContent = "Saving...";
   try {
     const res = await fetch(`${API_BASE}/requirements/translate`, {
       method: "POST",
@@ -91,15 +118,130 @@ translateBtn.addEventListener("click", async () => {
       body: JSON.stringify({ requirement_id: currentRequirementId, answers }),
     });
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
-    const data = await res.json();
+    await res.json();
 
-    translatedText.textContent = data.translated_text;
-    confidenceBadge.textContent = `${Math.round(data.confidence_score * 100)}% confidence`;
-    resultSection.classList.remove("hidden");
+    requirementCount += 1;
+    reqCounterLabel.textContent = `Requirements added: ${requirementCount}`;
+    finishBtn.disabled = false;
+
+    requirementInput.value = "";
+    ambiguitiesSection.classList.add("hidden");
+    ambiguitiesList.innerHTML = "";
+    currentRequirementId = null;
+    analyzeBtn.disabled = false;
+    requirementInput.focus();
   } catch (err) {
-    alert(`Translation failed.\n\n${err}`);
+    alert(`Could not save this requirement.\n\n${err}`);
   } finally {
-    translateBtn.disabled = false;
-    translateBtn.textContent = "Translate";
+    nextReqBtn.disabled = false;
+    nextReqBtn.textContent = "Next requirement";
   }
+});
+
+finishBtn.addEventListener("click", async () => {
+  await loadReview();
+  mainCard.classList.add("hidden");
+  reviewCard.classList.remove("hidden");
+});
+
+async function loadReview() {
+  try {
+    const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report`);
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data = await res.json();
+    reviewProjectLabel.textContent = data.project_name;
+    reviewList.innerHTML = "";
+
+    data.requirements.forEach((r) => {
+      const div = document.createElement("div");
+      div.className = "review-item";
+      div.dataset.requirementId = r.requirement_id;
+      div.innerHTML = `
+        <p class="translated">${r.translated_text || "(no translation)"}</p>
+        <p class="original-ref">Original: "${r.original_text}"</p>
+        <div class="row-actions"><button class="secondary-btn small-btn edit-btn">Edit</button></div>
+      `;
+      reviewList.appendChild(div);
+    });
+
+    reviewList.querySelectorAll(".edit-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => startEdit(e.target.closest(".review-item")));
+    });
+  } catch (err) {
+    alert(`Could not load requirements for review.\n\n${err}`);
+  }
+}
+
+function startEdit(itemDiv) {
+  const currentText = itemDiv.querySelector(".translated").textContent;
+  const requirementId = itemDiv.dataset.requirementId;
+  itemDiv.innerHTML = `
+    <textarea class="edit-textarea">${currentText}</textarea>
+    <div class="row-actions">
+      <button class="secondary-btn small-btn cancel-edit-btn">Cancel</button>
+      <button class="small-btn save-edit-btn">Save</button>
+    </div>
+  `;
+  itemDiv.querySelector(".cancel-edit-btn").addEventListener("click", loadReview);
+  itemDiv.querySelector(".save-edit-btn").addEventListener("click", async () => {
+    const newText = itemDiv.querySelector(".edit-textarea").value.trim();
+    if (!newText) return;
+    try {
+      const res = await fetch(`${API_BASE}/requirements/${requirementId}/edit`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ translated_text: newText }),
+      });
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      await loadReview();
+    } catch (err) {
+      alert(`Could not save the edit.\n\n${err}`);
+    }
+  });
+}
+
+generateReportBtn.addEventListener("click", async () => {
+  try {
+    const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report`);
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data = await res.json();
+    renderReportDoc(data);
+    reviewCard.classList.add("hidden");
+    reportCard.classList.remove("hidden");
+  } catch (err) {
+    alert(`Could not generate the report.\n\n${err}`);
+  }
+});
+
+function renderReportDoc(data) {
+  const translatedItems = data.requirements.map((r) => `<li>${r.translated_text || "(no translation)"}</li>`).join("");
+  const originalItems = data.requirements.map((r) => `<li>${r.original_text}</li>`).join("");
+  reportDoc.innerHTML = `
+    <h3>${data.project_name} — System Requirements Specification</h3>
+    <ol>${translatedItems}</ol>
+    <div class="appendix">
+      <h3>Appendix: Original Client Requirements</h3>
+      <ol>${originalItems}</ol>
+    </div>
+  `;
+}
+
+newSessionBtn.addEventListener("click", () => {
+  currentSessionId = null;
+  currentRequirementId = null;
+  requirementCount = 0;
+  projectNameInput.value = "";
+  requirementInput.value = "";
+  reqCounterLabel.textContent = "Requirements added: 0";
+  ambiguitiesSection.classList.add("hidden");
+  ambiguitiesList.innerHTML = "";
+  finishBtn.disabled = true;
+  analyzeBtn.disabled = false;
+  reportCard.classList.add("hidden");
+  startCard.classList.remove("hidden");
+});
+
+exportDocBtn.addEventListener("click", () => {
+  if (!currentSessionId) return;
+  window.open(`${API_BASE}/sessions/${currentSessionId}/report/docx`, "_blank");
 });

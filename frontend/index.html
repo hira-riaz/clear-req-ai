@@ -7,32 +7,53 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="card">
+
+  <div class="card" id="startCard">
+    <div class="header"><span class="brand">ClearReq AI</span></div>
+    <p class="label">Start a session</p>
+    <input id="projectNameInput" class="answer-input" placeholder="Project name (e.g. Hospital System)" />
+    <div class="actions"><button id="startSessionBtn">Start session</button></div>
+  </div>
+
+  <div class="card hidden" id="mainCard">
     <div class="header">
       <span class="brand">ClearReq AI</span>
-      <span class="project-label">Session #1</span>
+      <span class="project-label" id="projectLabel"></span>
     </div>
+
+    <p class="label" id="reqCounterLabel">Requirements added: 0</p>
 
     <p class="label">Requirement input</p>
-    <textarea id="requirementInput" placeholder="e.g. The system should be secure and easy to use.">The system should be secure and easy to use.</textarea>
-    <div class="actions">
-      <button id="analyzeBtn">Analyze</button>
-    </div>
+    <textarea id="requirementInput" placeholder="e.g. The system should be secure and easy to use."></textarea>
+    <div class="actions"><button id="analyzeBtn">Analyze</button></div>
 
     <div id="ambiguitiesSection" class="hidden">
-      <p class="label">Ambiguities detected</p>
+      <p class="label" id="ambiguitiesLabel">Ambiguities detected</p>
       <div id="ambiguitiesList"></div>
-      <div class="actions">
-        <button id="translateBtn">Translate</button>
-      </div>
+      <div class="actions"><button id="nextReqBtn">Next requirement</button></div>
     </div>
 
-    <div id="resultSection" class="hidden">
-      <div class="result-header">
-        <p class="label">Translated requirement</p>
-        <span id="confidenceBadge" class="badge"></span>
-      </div>
-      <div id="translatedText" class="result-box"></div>
+    <div class="actions actions-split finish-row">
+      <button id="finishBtn" class="secondary-btn" disabled>Finish &amp; review requirements</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="reviewCard">
+    <div class="header">
+      <span class="brand">ClearReq AI — Review</span>
+      <span class="project-label" id="reviewProjectLabel"></span>
+    </div>
+    <p class="label">Review translated requirements before generating the final report. Edit anything that needs a change.</p>
+    <div id="reviewList"></div>
+    <div class="actions"><button id="generateReportBtn">Generate report</button></div>
+  </div>
+
+  <div class="card hidden" id="reportCard">
+    <div class="header"><span class="brand">ClearReq AI — Report</span></div>
+    <div id="reportDoc" class="report-doc"></div>
+    <div class="actions actions-split">
+      <button id="exportDocBtn" class="secondary-btn">Export as Word</button>
+      <button id="newSessionBtn">Start new session</button>
     </div>
   </div>
 

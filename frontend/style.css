@@ -66,7 +66,15 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
   padding: 10px 12px;
   margin-bottom: 10px;
 }
+.ambiguity-card.conflict-card {
+  background: #fdecea;
+  border: 1px solid #f3b4ab;
+}
 
+.category.conflict {
+  background: #fdecea;
+  color: #a4321f;
+}
 .ambiguity-top {
   display: flex;
   justify-content: space-between;
@@ -115,4 +123,61 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
   padding: 10px 12px;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.actions-split { justify-content: space-between; }
+
+.secondary-btn {
+  background: transparent;
+  color: #1f3864;
+  border: 1px solid #1f3864;
+}
+.secondary-btn:hover { background: #eef1f6; }
+
+.report-item {
+  background: #f1efe8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.report-item .original { font-size: 12px; color: #7a776c; margin: 0 0 6px; }
+.report-item .translated { font-size: 13px; line-height: 1.6; margin: 0; }
+.report-item .badge { margin-left: 8px; }
+
+.finish-row { margin-top: 8px; }
+
+.review-item {
+  background: #f1efe8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.review-item .translated { font-size: 13px; line-height: 1.6; margin: 0 0 6px; }
+.review-item .original-ref { font-size: 11px; color: #9c9990; margin: 0 0 8px; }
+.review-item textarea, .edit-textarea {
+  width: 100%;
+  min-height: 60px;
+  font-size: 13px;
+  padding: 8px;
+  border: 1px solid #ddd9cf;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.review-item .row-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.small-btn { height: 28px; font-size: 12px; padding: 0 10px; }
+
+.report-doc { font-size: 14px; line-height: 1.8; }
+.report-doc h3 { font-size: 15px; margin: 20px 0 10px; }
+.report-doc ol { padding-left: 20px; margin: 0 0 10px; }
+.report-doc li { margin-bottom: 10px; }
+.report-doc .appendix { margin-top: 28px; padding-top: 16px; border-top: 1px solid #ddd9cf; }
+.report-doc .appendix li { color: #56534a; font-style: italic; }
+
+.reused-note {
+  font-size: 11px;
+  color: #0c447c;
+  background: #e6f1fb;
+  padding: 4px 8px;
+  border-radius: 4px;
+  margin: 0 0 6px;
 }
