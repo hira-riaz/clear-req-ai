@@ -267,8 +267,8 @@ def get_requirement(requirement_id: int, db: DBSession = Depends(get_db)):
         "status": requirement.status,
         "versions": [
             {"version_number": v.version_number, "translated_text": v.translated_text,
-             "confidence_score": v.confidence_score}
-            for v in versions
+             "confidence_score": v.confidence_score, "created_at": v.created_at.isoformat()}
+            for v in sorted(versions, key=lambda v: v.version_number, reverse=True)
         ],
     }
 

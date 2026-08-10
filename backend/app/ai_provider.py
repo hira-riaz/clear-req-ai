@@ -17,8 +17,12 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-_gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-_groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+_gemini_client = (
+    genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 30000})
+    if GEMINI_API_KEY else None
+)  # timeout in milliseconds
+
+_groq_client = Groq(api_key=GROQ_API_KEY, timeout=30.0) if GROQ_API_KEY else None  # timeout in seconds
 
 DETECTION_PROMPT = """You are analysing a software requirement for ambiguity.
 Requirement: "{text}"
@@ -67,7 +71,7 @@ If there is no conflict, respond with []."""
 
 def _call_gemini(prompt: str) -> str:
     response = _gemini_client.models.generate_content(
-        model="gemini-2.5-flash", contents=prompt
+        model="gemini-2.5-flash-lite", contents=prompt
     )
     return response.text
 
