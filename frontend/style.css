@@ -181,3 +181,12 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
   border-radius: 4px;
   margin: 0 0 6px;
 }
+
+.version-history {
+  margin-top: 8px;
+  border-top: 1px dashed #ddd9cf;
+  padding-top: 8px;
+}
+.version-entry { margin-bottom: 10px; }
+.version-meta { font-size: 11px; color: #9c9990; margin: 0 0 3px; }
+.version-text { font-size: 12px; color: #56534a; margin: 0; line-height: 1.5; }

@@ -159,7 +159,11 @@ async function loadReview() {
       div.innerHTML = `
         <p class="translated">${r.translated_text || "(no translation)"}</p>
         <p class="original-ref">Original: "${r.original_text}"</p>
-        <div class="row-actions"><button class="secondary-btn small-btn edit-btn">Edit</button></div>
+        <div class="row-actions">
+          <button class="secondary-btn small-btn history-btn">History</button>
+          <button class="secondary-btn small-btn edit-btn">Edit</button>
+        </div>
+        <div class="version-history hidden"></div>
       `;
       reviewList.appendChild(div);
     });
@@ -167,10 +171,46 @@ async function loadReview() {
     reviewList.querySelectorAll(".edit-btn").forEach((btn) => {
       btn.addEventListener("click", (e) => startEdit(e.target.closest(".review-item")));
     });
+    reviewList.querySelectorAll(".history-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => toggleHistory(e.target.closest(".review-item")));
+    });
   } catch (err) {
     alert(`Could not load requirements for review.\n\n${err}`);
   }
 }
+
+
+async function toggleHistory(itemDiv) {
+  const panel = itemDiv.querySelector(".version-history");
+  const requirementId = itemDiv.dataset.requirementId;
+
+  if (!panel.classList.contains("hidden")) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/requirements/${requirementId}`);
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data = await res.json();
+
+    panel.innerHTML = data.versions.map((v) => {
+      const date = new Date(v.created_at).toLocaleString();
+      const pct = v.confidence_score != null ? `${Math.round(v.confidence_score * 100)}%` : "—";
+      return `
+        <div class="version-entry">
+          <p class="version-meta">v${v.version_number} · ${pct} confidence · ${date}</p>
+          <p class="version-text">${v.translated_text}</p>
+        </div>
+      `;
+    }).join("") || "<p class='version-meta'>No versions yet.</p>";
+
+    panel.classList.remove("hidden");
+  } catch (err) {
+    alert(`Could not load version history.\n\n${err}`);
+  }
+}
+
 
 function startEdit(itemDiv) {
   const currentText = itemDiv.querySelector(".translated").textContent;
