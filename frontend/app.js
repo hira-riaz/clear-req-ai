@@ -4,6 +4,10 @@ let currentSessionId = null;
 let currentRequirementId = null;
 let requirementCount = 0;
 
+let currentAmbiguities = [];
+let currentAmbiguityIndex = 0;
+let currentAnswers = [];
+
 const startCard = document.getElementById("startCard");
 const mainCard = document.getElementById("mainCard");
 const reviewCard = document.getElementById("reviewCard");
@@ -17,11 +21,8 @@ const reqCounterLabel = document.getElementById("reqCounterLabel");
 const analyzeBtn = document.getElementById("analyzeBtn");
 const requirementInput = document.getElementById("requirementInput");
 const ambiguitiesSection = document.getElementById("ambiguitiesSection");
-const ambiguitiesLabel = document.getElementById("ambiguitiesLabel");
-const ambiguitiesList = document.getElementById("ambiguitiesList");
-const nextReqBtn = document.getElementById("nextReqBtn");
+const ambiguityStepper = document.getElementById("ambiguityStepper");
 const finishBtn = document.getElementById("finishBtn");
-const exportDocBtn = document.getElementById("exportDocBtn");
 
 const reviewList = document.getElementById("reviewList");
 const reviewProjectLabel = document.getElementById("reviewProjectLabel");
@@ -29,6 +30,7 @@ const generateReportBtn = document.getElementById("generateReportBtn");
 
 const reportDoc = document.getElementById("reportDoc");
 const newSessionBtn = document.getElementById("newSessionBtn");
+const exportDocBtn = document.getElementById("exportDocBtn");
 
 startSessionBtn.addEventListener("click", async () => {
   const name = projectNameInput.value.trim();
@@ -68,54 +70,95 @@ analyzeBtn.addEventListener("click", async () => {
     });
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     const data = await res.json();
+
     currentRequirementId = data.requirement_id;
-    renderAmbiguities(data.ambiguities);
-    ambiguitiesSection.classList.remove("hidden");
+    currentAmbiguities = data.ambiguities;
+    currentAmbiguityIndex = 0;
+    currentAnswers = [];
+
+    if (currentAmbiguities.length === 0) {
+      // Nothing to clarify — translate immediately with no answers
+      await finalizeRequirement();
+    } else {
+      ambiguitiesSection.classList.remove("hidden");
+      showCurrentAmbiguity();
+    }
   } catch (err) {
     alert(`Could not reach the backend.\n\n${err}`);
     analyzeBtn.disabled = false;
-  } finally {
     analyzeBtn.textContent = "Analyze";
   }
 });
 
-function renderAmbiguities(ambiguities) {
-  ambiguitiesList.innerHTML = "";
-  if (ambiguities.length === 0) {
-    ambiguitiesLabel.textContent = "No ambiguities or conflicts detected";
+function showCurrentAmbiguity() {
+  if (currentAmbiguityIndex >= currentAmbiguities.length) {
+    finalizeRequirement();
     return;
   }
-  ambiguitiesLabel.textContent = "Ambiguities detected";
-  ambiguities.forEach((a) => {
-    const isConflict = a.category === "conflict";
-    const div = document.createElement("div");
-    div.className = isConflict ? "ambiguity-card conflict-card" : "ambiguity-card";
-    div.innerHTML = `
-      <div class="ambiguity-top">
-        <span class="term">${isConflict ? "⚠ Conflict detected" : `"${a.term}"`}</span>
-        <span class="category ${isConflict ? "conflict" : ""}">${a.category}</span>
-      </div>
-      <p class="question">${a.question}</p>
-      ${a.suggested_answer ? '<p class="reused-note">Reused from an earlier answer in this session — edit if this instance is different.</p>' : ""}
-      <input class="answer-input" data-ambiguity-id="${a.ambiguity_id}" placeholder="Your answer..." value="${a.suggested_answer ? a.suggested_answer.replace(/"/g, '&quot;') : ""}" />
-    `;
-    ambiguitiesList.appendChild(div);
+
+  const a = currentAmbiguities[currentAmbiguityIndex];
+  const isConflict = a.category === "conflict";
+
+  let optionsHtml = "";
+  const options = a.options || [];
+  if (a.suggested_answer) {
+    optionsHtml += `<button class="option-btn suggested-btn" data-answer="${escapeAttr(a.suggested_answer)}">${a.suggested_answer} <span class="reused-tag">(used earlier)</span></button>`;
+  }
+  options.forEach((opt) => {
+    optionsHtml += `<button class="option-btn" data-answer="${escapeAttr(opt)}">${opt}</button>`;
+  });
+  optionsHtml += `<button class="option-btn other-btn" id="otherOptionBtn">Other...</button>`;
+
+  const div = document.createElement("div");
+  div.className = isConflict ? "ambiguity-card conflict-card" : "ambiguity-card";
+  div.innerHTML = `
+    <div class="ambiguity-top">
+      <span class="term">${isConflict ? "⚠ Conflict detected" : `"${a.term}"`}</span>
+      <span class="category ${isConflict ? "conflict" : ""}">${a.category}</span>
+    </div>
+    <p class="question">${a.question}</p>
+    <div class="options-list">${optionsHtml}</div>
+    <div class="other-input-row hidden">
+      <input class="answer-input other-input" placeholder="Type your own answer..." />
+      <button class="small-btn confirm-other-btn">Confirm</button>
+    </div>
+  `;
+
+  ambiguityStepper.innerHTML = "";
+  ambiguityStepper.appendChild(div);
+
+  div.querySelectorAll(".option-btn:not(.other-btn)").forEach((btn) => {
+    btn.addEventListener("click", () => recordAnswer(a.ambiguity_id, btn.dataset.answer));
+  });
+
+  div.querySelector("#otherOptionBtn").addEventListener("click", () => {
+    div.querySelector(".other-input-row").classList.remove("hidden");
+    div.querySelector(".other-input").focus();
+  });
+
+  div.querySelector(".confirm-other-btn").addEventListener("click", () => {
+    const val = div.querySelector(".other-input").value.trim();
+    if (!val) return;
+    recordAnswer(a.ambiguity_id, val);
   });
 }
 
-nextReqBtn.addEventListener("click", async () => {
-  const inputs = ambiguitiesList.querySelectorAll(".answer-input");
-  const answers = Array.from(inputs)
-    .map((el) => ({ ambiguity_id: parseInt(el.dataset.ambiguityId, 10), answer: el.value.trim() }))
-    .filter((a) => a.answer.length > 0);
+function escapeAttr(str) {
+  return str.replace(/"/g, "&quot;");
+}
 
-  nextReqBtn.disabled = true;
-  nextReqBtn.textContent = "Saving...";
+function recordAnswer(ambiguityId, answer) {
+  currentAnswers.push({ ambiguity_id: ambiguityId, answer });
+  currentAmbiguityIndex += 1;
+  showCurrentAmbiguity();
+}
+
+async function finalizeRequirement() {
   try {
     const res = await fetch(`${API_BASE}/requirements/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requirement_id: currentRequirementId, answers }),
+      body: JSON.stringify({ requirement_id: currentRequirementId, answers: currentAnswers }),
     });
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     await res.json();
@@ -126,19 +169,25 @@ nextReqBtn.addEventListener("click", async () => {
 
     requirementInput.value = "";
     ambiguitiesSection.classList.add("hidden");
-    ambiguitiesList.innerHTML = "";
+    ambiguityStepper.innerHTML = "";
     currentRequirementId = null;
-    analyzeBtn.disabled = false;
+    currentAmbiguities = [];
+    currentAmbiguityIndex = 0;
+    currentAnswers = [];
     requirementInput.focus();
   } catch (err) {
     alert(`Could not save this requirement.\n\n${err}`);
   } finally {
-    nextReqBtn.disabled = false;
-    nextReqBtn.textContent = "Next requirement";
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = "Analyze";
   }
-});
+}
 
 finishBtn.addEventListener("click", async () => {
+  if (!ambiguitiesSection.classList.contains("hidden") && currentRequirementId) {
+    alert("You have an unfinished requirement — resolve the current question before finishing.");
+    return;
+  }
   await loadReview();
   mainCard.classList.add("hidden");
   reviewCard.classList.remove("hidden");
@@ -179,7 +228,6 @@ async function loadReview() {
   }
 }
 
-
 async function toggleHistory(itemDiv) {
   const panel = itemDiv.querySelector(".version-history");
   const requirementId = itemDiv.dataset.requirementId;
@@ -188,7 +236,6 @@ async function toggleHistory(itemDiv) {
     panel.classList.add("hidden");
     return;
   }
-
   try {
     const res = await fetch(`${API_BASE}/requirements/${requirementId}`);
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
@@ -210,7 +257,6 @@ async function toggleHistory(itemDiv) {
     alert(`Could not load version history.\n\n${err}`);
   }
 }
-
 
 function startEdit(itemDiv) {
   const currentText = itemDiv.querySelector(".translated").textContent;
@@ -266,22 +312,25 @@ function renderReportDoc(data) {
   `;
 }
 
+exportDocBtn.addEventListener("click", () => {
+  if (!currentSessionId) return;
+  window.open(`${API_BASE}/sessions/${currentSessionId}/report/docx`, "_blank");
+});
+
 newSessionBtn.addEventListener("click", () => {
   currentSessionId = null;
   currentRequirementId = null;
   requirementCount = 0;
+  currentAmbiguities = [];
+  currentAmbiguityIndex = 0;
+  currentAnswers = [];
   projectNameInput.value = "";
   requirementInput.value = "";
   reqCounterLabel.textContent = "Requirements added: 0";
   ambiguitiesSection.classList.add("hidden");
-  ambiguitiesList.innerHTML = "";
+  ambiguityStepper.innerHTML = "";
   finishBtn.disabled = true;
   analyzeBtn.disabled = false;
   reportCard.classList.add("hidden");
   startCard.classList.remove("hidden");
-});
-
-exportDocBtn.addEventListener("click", () => {
-  if (!currentSessionId) return;
-  window.open(`${API_BASE}/sessions/${currentSessionId}/report/docx`, "_blank");
 });

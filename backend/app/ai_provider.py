@@ -135,6 +135,44 @@ def translate(text: str, clarifications: list[dict], context: list[str] | None =
         return {"translated_text": text, "confidence": 0.0}
 
 
+
+OPTIONS_PROMPT = """You are helping a requirements engineer quickly resolve
+ambiguity during a live client meeting. For each flagged ambiguous term
+below, generate 3-4 short, concrete, mutually distinct answer options a
+client could pick from to clarify what they mean. Options should be plain
+language, under 10 words each, and meaningfully different from each other.
+
+Requirement: "{text}"
+
+Ambiguous terms and their clarification questions:
+{terms_list}
+
+Respond ONLY with a JSON object mapping each term to a list of option
+strings, e.g.:
+{{"clean": ["Minimal, uncluttered UI", "Easy to navigate", "Consistent visual style", "Modern look and feel"]}}"""
+
+
+def generate_answer_options(text: str, ambiguities: list[dict]) -> dict:
+    """
+    Given a requirement and its detected ambiguities, generates 3-4
+    clickable clarification options per term, for use in live meetings
+    where typing full answers isn't feasible. Ephemeral — not persisted to
+    the database, regenerated fresh on each analyze call. Conflicts are
+    excluded; they still need a typed resolution since they're harder to
+    reduce to a short list of options.
+    """
+    real_terms = [a for a in ambiguities if a["category"] != "conflict"]
+    if not real_terms:
+        return {}
+    terms_list = "\n".join(f"- {a['term']}: {a['question']}" for a in real_terms)
+    raw = _call_with_fallback(OPTIONS_PROMPT.format(text=text, terms_list=terms_list))
+    try:
+        return _extract_json(raw)
+    except (json.JSONDecodeError, ValueError):
+        print(f"[AIProvider] Could not parse options response: {raw!r}")
+        return {}
+
+    
 def check_conflicts(new_text: str, existing_requirements: list[str]) -> list[dict]:
     """
     Checks a new requirement against already-translated requirements in the
