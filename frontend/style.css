@@ -216,3 +216,5 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
 .other-input-row.hidden { display: none; }
 .other-input-row:not(.hidden) { display: flex; }
 .other-input { flex: 1; }
+
+.skip-btn { margin-top: 4px; }

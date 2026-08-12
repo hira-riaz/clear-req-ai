@@ -37,18 +37,31 @@ Respond ONLY with a JSON array, no other text. Example:
    "question": "What is the expected response time?"}}]
 If there are no ambiguous terms, respond with []."""
 
-TRANSLATION_PROMPT = """Rewrite this software requirement as a clear,
-development-ready statement, incorporating the clarifications given. Keep
-terminology consistent with the other requirements already established for
-this system, listed below.
+TRANSLATION_PROMPT = """TRANSLATION_PROMPT = Rewrite this software requirement as a single, clear,
+development-ready statement, incorporating the clarifications given.
+
+Project context (from discovery questions, for grounding your interpretation):
+{discovery_context}
 
 Original requirement: "{text}"
 
 Clarifications:
 {clarifications}
 
-Other already-translated requirements for this system (for consistency only, do not repeat them):
-{context}
+Other already-translated requirements for this system (for terminology
+consistency only — do not repeat them): {context}
+
+CRITICAL RULES:
+- Produce exactly ONE coherent requirement statement. Never include
+  contradictory clauses (e.g. "shall X, but shall not X").
+- If a clarification resolves a conflict with another requirement, the
+  clarification's answer OVERRIDES the original wording on that point —
+  do not try to preserve both the original phrasing and the resolution at
+  once. State only the resolved version.
+- If a clarification answer is vague, unclear, or doesn't fully resolve
+  the ambiguity, still produce a single clear statement using your best
+  reasonable interpretation, and lower the confidence score accordingly —
+  do not hedge inside the sentence itself.
 
 Respond ONLY with a JSON object: {{"translated_text": "...", "confidence": 0.0-1.0}}"""
 
@@ -115,18 +128,12 @@ def detect_ambiguity(text: str) -> list[dict]:
     return results
 
 
-def translate(text: str, clarifications: list[dict], context: list[str] | None = None) -> dict:
-    """
-    Compose the final translated requirement.
-    clarifications: list of {"term": ..., "question": ..., "answer": ...}
-    context: other already-translated requirements in the same session,
-             used only for terminology consistency.
-    Returns {"translated_text": ..., "confidence": ...}
-    """
+def translate(text: str, clarifications: list[dict], context: list[str] | None = None, discovery: list[dict] | None = None) -> dict:
     clar_text = "\n".join(f"- {c['question']} -> {c['answer']}" for c in clarifications)
     context_text = "\n".join(f"- {c}" for c in context) if context else "(none yet)"
+    discovery_text = "\n".join(f"- {d['question']} -> {d['answer']}" for d in discovery if d.get("answer")) if discovery else "(none provided)"
     raw = _call_with_fallback(
-        TRANSLATION_PROMPT.format(text=text, clarifications=clar_text, context=context_text)
+        TRANSLATION_PROMPT.format(text=text, clarifications=clar_text, context=context_text, discovery_context=discovery_text)
     )
     try:
         return _extract_json(raw)

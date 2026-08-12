@@ -95,3 +95,11 @@ class Approval(Base):
     approved_by = Column(String)
     approved_at = Column(DateTime, default=datetime.utcnow)
     notes = Column(Text, nullable=True)
+
+class DiscoveryAnswer(Base):
+    __tablename__ = "discovery_answers"
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"))
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)  # null/empty if skipped
+    answered_at = Column(DateTime, default=datetime.utcnow)

@@ -32,6 +32,67 @@ const reportDoc = document.getElementById("reportDoc");
 const newSessionBtn = document.getElementById("newSessionBtn");
 const exportDocBtn = document.getElementById("exportDocBtn");
 
+const discoveryCard = document.getElementById("discoveryCard");
+const discoveryStepper = document.getElementById("discoveryStepper");
+
+
+const DISCOVERY_QUESTIONS = [
+  { question: "What platform(s) should this system run on?", options: ["Web", "Mobile app", "Desktop", "Multiple platforms"] },
+  { question: "Who are the primary users of this system?", options: ["General public", "Internal staff/employees", "Business customers", "Mixed / multiple user types"] },
+  { question: "Is this replacing an existing system?", options: ["Yes, replacing an existing system", "No, built from scratch", "Not sure yet"] },
+  { question: "Will the system handle sensitive data?", options: ["Yes, payment data", "Yes, personal/health data", "No sensitive data expected", "Not sure yet"] },
+  { question: "What scale of usage is expected?", options: ["Small (under 100 users)", "Medium (100–10,000 users)", "Large (10,000+ users)", "Not sure yet"] },
+  { question: "Are there fixed constraints on this project?", options: ["Fixed deadline", "Fixed budget", "Both", "No fixed constraints"] },
+];
+
+let discoveryIndex = 0;
+let discoveryAnswers = [];
+
+function showDiscoveryQuestion() {
+  if (discoveryIndex >= DISCOVERY_QUESTIONS.length) {
+    submitDiscovery();
+    return;
+  }
+  const q = DISCOVERY_QUESTIONS[discoveryIndex];
+  const div = document.createElement("div");
+  div.className = "ambiguity-card";
+  div.innerHTML = `
+    <p class="question">${q.question}</p>
+    <div class="options-list">
+      ${q.options.map((opt) => `<button class="option-btn" data-answer="${opt}">${opt}</button>`).join("")}
+    </div>
+    <button class="secondary-btn small-btn skip-btn">Skip</button>
+  `;
+  discoveryStepper.innerHTML = "";
+  discoveryStepper.appendChild(div);
+
+  div.querySelectorAll(".option-btn").forEach((btn) => {
+    btn.addEventListener("click", () => recordDiscoveryAnswer(q.question, btn.dataset.answer));
+  });
+  div.querySelector(".skip-btn").addEventListener("click", () => recordDiscoveryAnswer(q.question, null));
+}
+
+function recordDiscoveryAnswer(question, answer) {
+  discoveryAnswers.push({ question, answer });
+  discoveryIndex += 1;
+  showDiscoveryQuestion();
+}
+
+async function submitDiscovery() {
+  try {
+    await fetch(`${API_BASE}/sessions/${currentSessionId}/discovery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answers: discoveryAnswers }),
+    });
+  } catch (err) {
+    console.error("Could not save discovery answers", err);
+  }
+  discoveryCard.classList.add("hidden");
+  mainCard.classList.remove("hidden");
+}
+
+
 startSessionBtn.addEventListener("click", async () => {
   const name = projectNameInput.value.trim();
   if (!name) return;
@@ -48,7 +109,8 @@ startSessionBtn.addEventListener("click", async () => {
     currentSessionId = data.session_id;
     projectLabel.textContent = data.project_name;
     startCard.classList.add("hidden");
-    mainCard.classList.remove("hidden");
+    discoveryCard.classList.remove("hidden");
+    showDiscoveryQuestion();
   } catch (err) {
     alert(`Could not start a session. Is the backend running at ${API_BASE}?\n\n${err}`);
   } finally {
@@ -71,6 +133,7 @@ analyzeBtn.addEventListener("click", async () => {
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     const data = await res.json();
 
+    // Set state for the next phase
     currentRequirementId = data.requirement_id;
     currentAmbiguities = data.ambiguities;
     currentAmbiguityIndex = 0;
@@ -80,15 +143,21 @@ analyzeBtn.addEventListener("click", async () => {
       // Nothing to clarify — translate immediately with no answers
       await finalizeRequirement();
     } else {
+      // Transition from input view to the ambiguities view
+      // Note: If this button lives inside a mainCard or inputCard, 
+      // you might need to add a line here to hide it, e.g., mainCard.classList.add("hidden");
       ambiguitiesSection.classList.remove("hidden");
       showCurrentAmbiguity();
     }
   } catch (err) {
     alert(`Could not reach the backend.\n\n${err}`);
+  } finally {
+    // Keeps button state management safe and grouped together
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = "Analyze";
   }
 });
+
 
 function showCurrentAmbiguity() {
   if (currentAmbiguityIndex >= currentAmbiguities.length) {
@@ -331,6 +400,9 @@ newSessionBtn.addEventListener("click", () => {
   ambiguityStepper.innerHTML = "";
   finishBtn.disabled = true;
   analyzeBtn.disabled = false;
-  reportCard.classList.add("hidden");
+  discoveryIndex = 0;
+  discoveryAnswers = [];
+  discoveryCard.classList.add("hidden");
   startCard.classList.remove("hidden");
 });
+
