@@ -3,59 +3,138 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ClearReq AI</title>
+  <title>Dashboard</title>
+  <!-- Main Professional Font: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <div class="card" id="startCard">
-    <div class="header"><span class="brand">ClearReq AI</span></div>
-    <p class="label">Start a session</p>
-    <input id="projectNameInput" class="answer-input" placeholder="Project name (e.g. Hospital System)" />
-    <div class="actions"><button id="startSessionBtn">Start session</button></div>
-  </div>
+  <!-- Image 0 Layout: Overall Dashboard Container -->
+  <div class="dashboard">
+    
+    <!-- Image 0 Layout: Sidebar with Session History -->
+    <aside class="sidebar">
+      <!-- Inside <aside class="sidebar"> -->
+      <div class="sidebar-header">
+        <div class="brand">
+          <img src="clearreq-icon.svg" alt="ClearReq Logo" class="brand-logo-img">
+          ClearReq AI
+        </div>
+      </div>
+      
+      <!-- New Session Button (Image 0 Top Action) -->
+      <button id="newSessionBtn" class="primary-btn sidebar-action">New Session</button>
+      
+      <nav class="nav-links">
+        <div class="nav-heading">SESSION HISTORY</div>
+        <div id="sessionHistoryList" class="history-list">
+          <!-- Session history links would dynamically go here. For now, empty or dynamic. -->
+          <span class="history-empty">No past sessions</span>
+        </div>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <span class="status-indicator"></span>
+        <span class="version">ClearReq AI v1.0</span>
+      </div>
+    </aside>
 
-  <div class="card hidden" id="mainCard">
-    <div class="header">
-      <span class="brand">ClearReq AI</span>
-      <span class="project-label" id="projectLabel"></span>
-    </div>
+    <!-- Image 0 Layout: Main Workspace Area -->
+    <main class="main-workspace">
+      
+      <!-- Global Top Header (like Image 1 top bar) -->
+      <header class="top-header">
+        <div class="header-left">
+          <h1 id="globalHeaderTitle">Analyze Requirement</h1>
+          <span class="project-label" id="projectLabel">No Active Session</span>
+        </div>
+      </header>
 
-    <p class="label" id="reqCounterLabel">Requirements added: 0</p>
+      <!-- Main Content Views (Cards) -->
+      <div class="workspace-content">
+        
+        <!-- ========================================= -->
+        <!-- Start Session "Card" (Initially Visible)  -->
+        <!-- ========================================= -->
+        <div class="card" id="startCard">
+          <div class="card-body">
+            <h2 class="card-title">Start a Session</h2>
+            <p class="subtitle">Enter your project name to begin analyzing and clarifying requirements.</p>
+            <div class="form-group">
+              <input id="projectNameInput" class="answer-input" placeholder="Project name (e.g. Hospital System)" />
+            </div>
+            <div class="actions">
+              <button id="startSessionBtn" class="primary-btn">Start session</button>
+            </div>
+          </div>
+        </div>
 
-    <p class="label">Requirement input</p>
-    <textarea id="requirementInput" placeholder="e.g. The system should be secure and easy to use."></textarea>
-    <div class="actions"><button id="analyzeBtn">Analyze</button></div>
+        <!-- ========================================= -->
+        <!-- Main Workspace "Card" (Requirement Input) -->
+        <!-- ========================================= -->
+        <div class="card hidden" id="mainCard">
+          <div class="card-body">
+            <div class="card-top-bar">
+              <span id="reviewProjectLabel" class="project-label"></span>
+              <span class="counter-badge" id="reqCounterLabel">Requirements added: 0</span>
+            </div>
+            
+            <textarea id="requirementInput" placeholder="e.g. The system should be secure and easy to use."></textarea>
+            <div class="actions">
+              <button id="analyzeBtn" class="primary-btn">Analyze</button>
+            </div>
 
-    <div id="ambiguitiesSection" class="hidden">
-      <p class="label" id="ambiguitiesLabel">Ambiguities detected</p>
-      <div id="ambiguitiesList"></div>
-      <div class="actions"><button id="nextReqBtn">Next requirement</button></div>
-    </div>
+            <!-- Disambiguation Section -->
+            <div id="ambiguitiesSection" class="hidden">
+              <p class="label heading" id="ambiguitiesLabel">Ambiguities detected</p>
+              <div id="ambiguitiesList"></div>
+              <div class="actions">
+                <button id="nextReqBtn" class="primary-btn">Next requirement</button>
+              </div>
+            </div>
 
-    <div class="actions actions-split finish-row">
-      <button id="finishBtn" class="secondary-btn" disabled>Finish &amp; review requirements</button>
-    </div>
-  </div>
+            <!-- Finish Row -->
+            <div class="finish-row actions">
+              <button id="finishBtn" class="secondary-btn" disabled>Finish &amp; review requirements</button>
+            </div>
+          </div>
+        </div>
 
-  <div class="card hidden" id="reviewCard">
-    <div class="header">
-      <span class="brand">ClearReq AI — Review</span>
-      <span class="project-label" id="reviewProjectLabel"></span>
-    </div>
-    <p class="label">Review translated requirements before generating the final report. Edit anything that needs a change.</p>
-    <div id="reviewList"></div>
-    <div class="actions"><button id="generateReportBtn">Generate report</button></div>
-  </div>
+        <!-- ========================================= -->
+        <!-- Review "Card" (List View)               -->
+        <!-- ========================================= -->
+        <div class="card hidden" id="reviewCard">
+          <div class="card-body">
+            <div class="card-top-bar">
+              <h2 class="card-title">Review Translated Requirements</h2>
+            </div>
+            <p class="subtitle">Review and edit requirements before generating the report.</p>
+            <div id="reviewList"></div>
+            <div class="actions">
+              <button id="generateReportBtn" class="primary-btn">Generate report</button>
+            </div>
+          </div>
+        </div>
 
-  <div class="card hidden" id="reportCard">
-    <div class="header"><span class="brand">ClearReq AI — Report</span></div>
-    <div id="reportDoc" class="report-doc"></div>
-    <div class="actions actions-split">
-      <button id="exportDocBtn" class="secondary-btn">Export as Word</button>
-      <button id="newSessionBtn">Start new session</button>
-    </div>
-  </div>
+        <!-- ========================================= -->
+        <!-- Report "Card" (Document View)            -->
+        <!-- ========================================= -->
+        <div class="card hidden" id="reportCard">
+          <div class="card-body">
+            <h2 class="card-title">ClearReq AI Report</h2>
+            <div id="reportDoc" class="report-doc"></div>
+            <div class="actions actions-split">
+              <button id="exportDocBtn" class="secondary-btn">Export as Word</button>
+            </div>
+          </div>
+        </div>
+
+      </div> <!-- workspace-content -->
+    </main> <!-- main-workspace -->
+  </div> <!-- dashboard -->
 
   <script src="app.js"></script>
 </body>
