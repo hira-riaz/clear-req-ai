@@ -21,8 +21,7 @@ from docx import Document
 
 from . import models, rule_detector, ai_provider
 from .database import engine, get_db
-
-from .schemas import RequirementIn, TranslateRequest, SessionIn, RequirementEdit, DiscoverySubmit
+from .schemas import RequirementIn, TranslateRequest, SessionIn, RequirementEdit
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -56,22 +55,6 @@ def start_session(payload: SessionIn, db: DBSession = Depends(get_db)):
 
     return {"session_id": session.id, "project_id": project.id, "project_name": project.name}
 
-@app.post("/sessions/{session_id}/discovery")
-def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db)):
-    """
-    Pre-elicitation intake: standard project-context questions asked once
-    per session, before requirement collection begins. Skipped questions
-    are still recorded (answer=None) so the report can show completeness.
-    """
-    for item in payload.answers:
-        db.add(models.DiscoveryAnswer(
-            session_id=session_id,
-            question=item.question,
-            answer=item.answer,
-        ))
-    db.commit()
-    return {"status": "saved", "count": len(payload.answers)}
-
 
 def _merge_ambiguities(rule_results: list[dict], ai_results: list[dict]) -> list[dict]:
     """Deduplicate by term, preferring the rule-based entry when both agree
@@ -88,7 +71,7 @@ def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id
     """
     Session memory: if this exact term was already clarified earlier in the
     same session, return that answer so the user isn't asked to re-answer
-    something they've already resolved.
+    something they've already resolved. Frontend pre-fills it, editable.
     """
     result = (
         db.query(models.Clarification)
@@ -108,8 +91,8 @@ def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id
 def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db)):
     """
     Detection phase: run both detectors, merge/deduplicate, check for
-    conflicts, check for terms already clarified earlier in the session,
-    generate clickable answer options for live-meeting use, save
+    conflicts with other requirements in the session, check for terms
+    already clarified earlier in the session (session memory), save
     everything, and return it to the frontend.
     """
     requirement = models.Requirement(
@@ -144,9 +127,6 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
             "question": c["question"],
         })
 
-    # Live-meeting support: generate clickable options for each ambiguity
-    answer_options = ai_provider.generate_answer_options(payload.text, merged)
-
     saved = []
     for item in merged:
         ambiguity = models.Ambiguity(
@@ -167,6 +147,7 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
         db.add(clarification)
         db.commit()
 
+        # Session memory: was this exact term already clarified earlier?
         suggested_answer = None
         if item["category"] != "conflict":
             suggested_answer = _find_previous_answer(db, payload.session_id, requirement.id, item["term"])
@@ -179,7 +160,6 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
             "confidence": ambiguity.confidence,
             "question": clarification.question,
             "suggested_answer": suggested_answer,
-            "options": answer_options.get(item["term"], []),
         })
 
     return {"requirement_id": requirement.id, "ambiguities": saved}
@@ -218,14 +198,8 @@ def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get
         .all()
     )
     context_texts = [v.translated_text for v in context_versions]
-    discovery_answers = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == requirement.session_id)
-        .all()
-    )
-    discovery_data = [{"question": d.question, "answer": d.answer} for d in discovery_answers]
 
-    result = ai_provider.translate(requirement.original_text, clarifications_for_prompt, context_texts, discovery_data)
+    result = ai_provider.translate(requirement.original_text, clarifications_for_prompt, context_texts)
 
     existing_versions = (
         db.query(models.RequirementVersion)
@@ -326,26 +300,20 @@ def get_session_report(session_id: int, db: DBSession = Depends(get_db)):
             "translated_text": latest.translated_text if latest else None,
             "confidence_score": latest.confidence_score if latest else None,
         })
-        
-
-    discovery = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == session_id)
-        .all()
-    )
 
     return {
         "session_id": session_id,
         "project_name": project.name if project else None,
         "requirements": items,
-        "discovery": [{"question": d.question, "answer": d.answer} for d in discovery],
     }
 
 
 @app.get("/sessions/{session_id}/report/docx")
 def download_report_docx(session_id: int, db: DBSession = Depends(get_db)):
     """
-    Same report as /report above, rendered as a downloadable Word document.
+    Same report as /report above, rendered as a downloadable Word document:
+    numbered translated requirements, followed by an appendix with the
+    client's original wording preserved exactly.
     """
     session = db.get(models.Session, session_id)
     project = db.get(models.Project, session.project_id) if session else None
@@ -358,15 +326,6 @@ def download_report_docx(session_id: int, db: DBSession = Depends(get_db)):
     doc = Document()
     title = project.name if project else "ClearReq AI Report"
     doc.add_heading(f"{title} — System Requirements Specification", level=1)
-    discovery = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == session_id)
-        .all()
-    )
-    if discovery:
-        doc.add_heading("Project Discovery", level=2)
-        for d in discovery:
-            doc.add_paragraph(f"{d.question} — {d.answer or '(skipped)'}")
     doc.add_paragraph(f"Generated by ClearReq AI on {datetime.utcnow().strftime('%Y-%m-%d')}")
 
     doc.add_heading("Translated Requirements", level=2)

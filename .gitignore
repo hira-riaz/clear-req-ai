@@ -13,6 +13,3 @@ backend/.env
 
 # Database 
 backend/app/clearreq.db
-
-#free buff bakwas
-.freebuff/
