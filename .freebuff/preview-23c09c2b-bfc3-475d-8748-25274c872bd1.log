@@ -33,3 +33,14 @@ INFO:     127.0.0.1:53192 - "POST /requirements/analyze HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54490 - "POST /requirements/translate HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54490 - "GET /sessions/6/report HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54490 - "GET /sessions/6/report HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61202 - "OPTIONS /sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61202 - "POST /sessions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60093 - "OPTIONS /sessions/7/discovery HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60093 - "POST /sessions/7/discovery HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58199 - "OPTIONS /requirements/analyze HTTP/1.1" 200 OK
+[AIProvider] Gemini failed (HTTPSConnectionPool(host='generativelanguage.googleapis.com', port=443): Max retries exceeded with url: /v1beta/models/gemini-2.5-flash-lite:generateContent (Caused by NameResolutionError("HTTPSConnection(host='generativelanguage.googleapis.com', port=443): Failed to resolve 'generativelanguage.googleapis.com' ([Errno 11001] getaddrinfo failed)"))), falling back to Groq
+[AIProvider] Gemini failed (404 NOT_FOUND. {'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash-lite is no longer available to new users. Please update your code to use a newer model for the latest features and improvements. We recommend you to use the Interactions API (https://ai.google.dev/gemini-api/docs/migrate-to-interactions).', 'status': 'NOT_FOUND'}}), falling back to Groq
+INFO:     127.0.0.1:58199 - "POST /requirements/analyze HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49514 - "OPTIONS /requirements/translate HTTP/1.1" 200 OK
+[AIProvider] Gemini failed (404 NOT_FOUND. {'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash-lite is no longer available to new users. Please update your code to use a newer model for the latest features and improvements. We recommend you to use the Interactions API (https://ai.google.dev/gemini-api/docs/migrate-to-interactions).', 'status': 'NOT_FOUND'}}), falling back to Groq
+INFO:     127.0.0.1:49514 - "POST /requirements/translate HTTP/1.1" 200 OK
