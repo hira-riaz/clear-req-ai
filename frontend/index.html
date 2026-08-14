@@ -7,14 +7,18 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
   <div class="card" id="startCard">
     <div class="header"><span class="brand">ClearReq AI</span></div>
     <p class="label">Start a session</p>
     <input id="projectNameInput" class="answer-input" placeholder="Project name (e.g. Hospital System)" />
     <div class="actions"><button id="startSessionBtn">Start session</button></div>
   </div>
-
+  <div class="card hidden" id="discoveryCard">
+    <div class="header"><span class="brand">ClearReq AI — Project Discovery</span></div>
+    <p class="label">A few quick questions before we start gathering requirements.</p>
+    <div id="discoveryStepper"></div>
+  </div>
+  
   <div class="card hidden" id="mainCard">
     <div class="header">
       <span class="brand">ClearReq AI</span>
@@ -28,9 +32,7 @@
     <div class="actions"><button id="analyzeBtn">Analyze</button></div>
 
     <div id="ambiguitiesSection" class="hidden">
-      <p class="label" id="ambiguitiesLabel">Ambiguities detected</p>
-      <div id="ambiguitiesList"></div>
-      <div class="actions"><button id="nextReqBtn">Next requirement</button></div>
+      <div id="ambiguityStepper"></div>
     </div>
 
     <div class="actions actions-split finish-row">
