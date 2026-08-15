@@ -199,7 +199,15 @@ def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get
     )
     context_texts = [v.translated_text for v in context_versions]
 
-    result = ai_provider.translate(requirement.original_text, clarifications_for_prompt, context_texts)
+    discovery_answers = (
+        db.query(models.DiscoveryAnswer)
+        .filter(models.DiscoveryAnswer.session_id == requirement.session_id)
+        .all()
+    )
+    discovery_data = [{"question": d.question, "answer": d.answer} for d in discovery_answers]
+
+    result = ai_provider.translate_and_verify(requirement.original_text, clarifications_for_prompt, context_texts, discovery_data)
+    
 
     existing_versions = (
         db.query(models.RequirementVersion)
