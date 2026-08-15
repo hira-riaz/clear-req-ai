@@ -14,4 +14,4 @@ backend/.env
 # Database 
 backend/app/clearreq.db
 
-.freebuff/
+backend/clearreq.db
