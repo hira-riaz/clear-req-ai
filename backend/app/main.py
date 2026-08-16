@@ -21,7 +21,7 @@ from docx import Document
 
 from . import models, rule_detector, ai_provider
 from .database import engine, get_db
-from .schemas import RequirementIn, TranslateRequest, SessionIn, RequirementEdit
+from .schemas import RequirementIn, TranslateRequest, SessionIn, RequirementEdit, DiscoverySubmit
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -54,6 +54,19 @@ def start_session(payload: SessionIn, db: DBSession = Depends(get_db)):
     db.refresh(session)
 
     return {"session_id": session.id, "project_id": project.id, "project_name": project.name}
+
+
+@app.post("/sessions/{session_id}/discovery")
+def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db)):
+    for item in payload.answers:
+        db.add(models.DiscoveryAnswer(
+            session_id=session_id,
+            question=item.question,
+            answer=item.answer,
+        ))
+    db.commit()
+    return {"status": "saved", "count": len(payload.answers)}
+
 
 
 def _merge_ambiguities(rule_results: list[dict], ai_results: list[dict]) -> list[dict]:
@@ -117,6 +130,7 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
         .all()
     )
     existing_texts = [v.translated_text for v in existing_versions]
+    
     conflicts = ai_provider.check_conflicts(payload.text, existing_texts)
     for c in conflicts:
         merged.append({
@@ -126,7 +140,8 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
             "confidence": 1.0,
             "question": c["question"],
         })
-
+    answer_options = ai_provider.generate_answer_options(payload.text, merged)
+    
     saved = []
     for item in merged:
         ambiguity = models.Ambiguity(
@@ -160,6 +175,7 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
             "confidence": ambiguity.confidence,
             "question": clarification.question,
             "suggested_answer": suggested_answer,
+            "options": answer_options.get(item["term"], []),
         })
 
     return {"requirement_id": requirement.id, "ambiguities": saved}

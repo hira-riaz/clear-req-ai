@@ -24,3 +24,11 @@ class SessionIn(BaseModel):
 class RequirementEdit(BaseModel):
     """Input for PATCH /requirements/{id}/edit"""
     translated_text: str
+
+class DiscoveryAnswerIn(BaseModel):
+    question: str
+    answer: str | None = None
+
+
+class DiscoverySubmit(BaseModel):
+    answers: list[DiscoveryAnswerIn]
