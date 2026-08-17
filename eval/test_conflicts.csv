@@ -1,0 +1,16 @@
+id,existing_requirement,new_requirement,expected_conflict
+1,"Any registered user can delete their own posts.","Only admins can delete posts.",yes
+2,"The system shall be available 24/7 with no scheduled downtime.","The system shall undergo scheduled maintenance every Sunday from 2-4 AM.",yes
+3,"All user data shall be publicly viewable by default.","User data shall be private and visible only to the user.",yes
+4,"The system shall allow guest checkout without creating an account.","Users must create an account before making a purchase.",yes
+5,"The system shall only accept payments in USD.","The system shall reject any payment not made in EUR.",yes
+6,"Users shall be limited to uploading files up to 5MB.","Users shall be able to upload files up to 50MB.",yes
+7,"The mobile app shall work fully offline with no internet required.","The mobile app requires an active internet connection for all features.",yes
+8,"There should be a written agreement to satisfy users that the service they are providing will be returned.","The system shall provide a platform for users to exchange digital services on demand, with no restrictions on service type and no predefined deadlines.",yes
+9,"Users can reset their password via email.","Users can enable two-factor authentication.",no
+10,"The system shall send email notifications for new messages.","The system shall send SMS notifications for payment confirmations.",no
+11,"Admins can view all user reports.","Regular users can only view their own reports.",no
+12,"The system shall support English as the default language.","The system shall allow users to switch the interface to French.",no
+13,"The dashboard shall display the last 10 transactions.","The dashboard shall show a chart of monthly spending.",no
+14,"The app shall automatically lower volume in noisy environments.","The app shall provide a 'party mode' for shared playlists.",no
+15,"Students can view posts about admissions from multiple universities.","Students can share posts with each other.",no
