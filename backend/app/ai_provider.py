@@ -33,7 +33,7 @@ Respond ONLY with a JSON array, no other text. Example:
    "question": "What is the expected response time?"}}]
 If there are no ambiguous terms, respond with []."""
 
-TRANSLATION_PROMPT = """Rewrite this software requirement as a single, clear,
+TRANSLATION_PROMPT = TRANSLATION_PROMPT = """Rewrite this software requirement as a single, clear,
 development-ready statement, incorporating the clarifications given.
 
 Project context (from discovery questions, for grounding your interpretation):
@@ -54,6 +54,14 @@ CRITICAL RULES:
   clarification's answer OVERRIDES the original wording on that point —
   do not try to preserve both the original phrasing and the resolution at
   once. State only the resolved version.
+- PRESERVE the strength and polarity of absolute or exclusive claims in
+  the original requirement (e.g. "must never", "only", "offline-first",
+  "online-first", "always", "no internet required") unless a clarification
+  answer explicitly asks you to soften, qualify, or hybridize that claim.
+  Do NOT default to hedged, compatible-sounding language ("when available",
+  "where possible") just because it sounds more reasonable — if the client
+  stated a hard constraint and nothing in the clarifications changed it,
+  keep it hard.
 - If a clarification answer is vague or doesn't fully resolve the
   ambiguity, still produce a single clear statement using your best
   reasonable interpretation, and lower the confidence score accordingly —

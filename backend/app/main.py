@@ -122,16 +122,28 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
     merged = _merge_ambiguities(rule_results, ai_results)
 
     # Session-level consistency: check for conflicts with already-translated requirements
-    existing_versions = (
-        db.query(models.RequirementVersion)
-        .join(models.Requirement)
+        # Compare against every other requirement in the session, using its
+    # latest translated version if one exists, or its original client
+    # wording if it hasn't been translated yet — a not-yet-translated
+    # requirement should still count for conflict-checking, not be
+    # silently skipped.
+    other_requirements = (
+        db.query(models.Requirement)
         .filter(models.Requirement.session_id == payload.session_id)
         .filter(models.Requirement.id != requirement.id)
         .all()
     )
-    existing_texts = [v.translated_text for v in existing_versions]
-    
+    existing_texts = []
+    for r in other_requirements:
+        latest = (
+            db.query(models.RequirementVersion)
+            .filter(models.RequirementVersion.requirement_id == r.id)
+            .order_by(models.RequirementVersion.version_number.desc())
+            .first()
+        )
+        existing_texts.append(latest.translated_text if latest else r.original_text)
     conflicts = ai_provider.check_conflicts(payload.text, existing_texts)
+    
     for c in conflicts:
         merged.append({
             "term": f"conflict with: {c['conflicts_with'][:60]}",
