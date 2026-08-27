@@ -218,3 +218,20 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
 .other-input { flex: 1; }
 
 .skip-btn { margin-top: 4px; }
+
+.category-tag {
+  font-size: 11px;
+  color: #7a776c;
+  font-style: italic;
+  margin-right: 4px;
+}
+
+.redundancy-notice {
+  background: #fdecea;
+  border: 1px solid #f3b4ab;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 16px 0;
+}
+.redundancy-title { font-weight: 600; color: #a4321f; margin: 0 0 8px; font-size: 13px; }
+.redundancy-notice ul { margin: 0; padding-left: 18px; font-size: 13px; color: #56534a; }

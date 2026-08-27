@@ -218,3 +218,37 @@ def check_conflicts(new_text: str, existing_requirements: list[str]) -> list[dic
         print(f"[AIProvider] Could not parse conflict-check response: {raw!r}")
         return []
     
+
+REDUNDANCY_PROMPT = """You are reviewing a set of finalized software
+requirements for the same system, checking whether any of them are
+redundant — i.e. describe the same underlying feature or intent, even if
+worded differently. Do NOT flag requirements that are merely related or in
+the same feature area; only flag ones that substantially overlap in what
+they ask the system to do.
+
+Requirements (numbered by their requirement_id):
+{requirements_list}
+
+Respond ONLY with a JSON array of redundant groups. Each group lists the
+requirement_ids that overlap and a short reason. Example:
+[{{"requirement_ids": [1, 2], "reason": "Both describe camera-based mood detection and playlist generation"}}]
+If there are no redundant groups, respond with []."""
+
+
+def check_redundancy(requirements: list[dict]) -> list[dict]:
+    """
+    requirements: list of {"requirement_id": int, "translated_text": str}
+    Returns list of {"requirement_ids": [...], "reason": "..."} groups.
+    Run at report-generation time, not during live elicitation — redundancy
+    is a whole-document property best assessed once requirements are final,
+    not something to interrupt a live meeting over.
+    """
+    if len(requirements) < 2:
+        return []
+    req_list = "\n".join(f"{r['requirement_id']}: {r['translated_text']}" for r in requirements)
+    raw = _call_with_fallback(REDUNDANCY_PROMPT.format(requirements_list=req_list))
+    try:
+        return _extract_json(raw)
+    except (json.JSONDecodeError, ValueError):
+        print(f"[AIProvider] Could not parse redundancy response: {raw!r}")
+        return []

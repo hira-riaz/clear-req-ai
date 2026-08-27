@@ -377,11 +377,29 @@ generateReportBtn.addEventListener("click", async () => {
 });
 
 function renderReportDoc(data) {
-  const translatedItems = data.requirements.map((r) => `<li>${escapeHtml(r.translated_text) || "(no translation)"}</li>`).join("");
+  const translatedItems = data.requirements.map((r) =>
+    `<li><span class="category-tag">[${escapeHtml(r.category || "general")}]</span> ${escapeHtml(r.translated_text) || "(no translation)"}</li>`
+  ).join("");
   const originalItems = data.requirements.map((r) => `<li>${escapeHtml(r.original_text)}</li>`).join("");
+
+  let redundancyHtml = "";
+  if (data.redundancy_flags && data.redundancy_flags.length > 0) {
+    const flagItems = data.redundancy_flags.map((g) => {
+      const ids = (g.requirement_ids || []).map((i) => `#${i}`).join(", ");
+      return `<li>${escapeHtml(ids)}: ${escapeHtml(g.reason || "")}</li>`;
+    }).join("");
+    redundancyHtml = `
+      <div class="redundancy-notice">
+        <p class="redundancy-title">⚠ Possible redundant requirements</p>
+        <ul>${flagItems}</ul>
+      </div>
+    `;
+  }
+
   reportDoc.innerHTML = `
-    <h3>${escapeHtml(data.project_name)} ΓÇö System Requirements Specification</h3>
+    <h3>${escapeHtml(data.project_name)} — System Requirements Specification</h3>
     <ol>${translatedItems}</ol>
+    ${redundancyHtml}
     <div class="appendix">
       <h3>Appendix: Original Client Requirements</h3>
       <ol>${originalItems}</ol>
