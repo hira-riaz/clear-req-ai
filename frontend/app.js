@@ -11,12 +11,14 @@ let currentAnswers = [];
 let discoveryIndex = 0;
 let discoveryAnswers = [];
 
+let lastReportData = null; // caches the last /report fetch so "Generate report" doesn't re-fetch and re-trigger AI calls unnecessarily
+
 const DISCOVERY_QUESTIONS = [
   { question: "What platform(s) should this system run on?", options: ["Web", "Mobile app", "Desktop", "Multiple platforms"] },
   { question: "Who are the primary users of this system?", options: ["General public", "Internal staff/employees", "Business customers", "Mixed / multiple user types"] },
   { question: "Is this replacing an existing system?", options: ["Yes, replacing an existing system", "No, built from scratch", "Not sure yet"] },
   { question: "Will the system handle sensitive data?", options: ["Yes, payment data", "Yes, personal/health data", "No sensitive data expected", "Not sure yet"] },
-  { question: "What scale of usage is expected?", options: ["Small (under 100 users)", "Medium (100ΓÇô10,000 users)", "Large (10,000+ users)", "Not sure yet"] },
+  { question: "What scale of usage is expected?", options: ["Small (under 100 users)", "Medium (100–10,000 users)", "Large (10,000+ users)", "Not sure yet"] },
   { question: "Are there fixed constraints on this project?", options: ["Fixed deadline", "Fixed budget", "Both", "No fixed constraints"] },
 ];
 
@@ -46,9 +48,9 @@ const reportDoc = document.getElementById("reportDoc");
 const newSessionBtn = document.getElementById("newSessionBtn");
 const exportDocBtn = document.getElementById("exportDocBtn");
 
-// ---- Security: escape all dynamic/user-supplied text before inserting
-// into innerHTML, to prevent stored XSS via requirement text, translated
-// text, or AI-generated terms/options. Never insert unescaped user input.
+// Security: escape all dynamic/user-supplied text before inserting into
+// innerHTML, to prevent stored XSS via requirement text, translated text,
+// or AI-generated terms/options.
 function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
@@ -87,7 +89,7 @@ startSessionBtn.addEventListener("click", async () => {
   }
 });
 
-// ---- Step 2: Project discovery questions ----
+// ---- Step 2: Project discovery ----
 function showDiscoveryQuestion() {
   if (discoveryIndex >= DISCOVERY_QUESTIONS.length) {
     submitDiscovery();
@@ -192,7 +194,7 @@ function showCurrentAmbiguity() {
   div.className = isConflict ? "ambiguity-card conflict-card" : "ambiguity-card";
   div.innerHTML = `
     <div class="ambiguity-top">
-      <span class="term">${isConflict ? "ΓÜá Conflict detected" : `"${escapeHtml(a.term)}"`}</span>
+      <span class="term">${isConflict ? "⚠ Conflict detected" : `"${escapeHtml(a.term)}"`}</span>
       <span class="category ${isConflict ? "conflict" : ""}">${escapeHtml(a.category)}</span>
     </div>
     <p class="question">${escapeHtml(a.question)}</p>
@@ -249,6 +251,7 @@ async function finalizeRequirement() {
     currentAmbiguities = [];
     currentAmbiguityIndex = 0;
     currentAnswers = [];
+    lastReportData = null; // requirements changed, force a fresh report fetch next time
     requirementInput.focus();
   } catch (err) {
     alert(`Could not save this requirement.\n\n${err}`);
@@ -261,7 +264,7 @@ async function finalizeRequirement() {
 // ---- Step 4: Finish and review ----
 finishBtn.addEventListener("click", async () => {
   if (!ambiguitiesSection.classList.contains("hidden") && currentRequirementId) {
-    alert("You have an unfinished requirement ΓÇö resolve the current question before finishing.");
+    alert("You have an unfinished requirement — resolve the current question before finishing.");
     return;
   }
   await loadReview();
@@ -274,6 +277,7 @@ async function loadReview() {
     const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report`);
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     const data = await res.json();
+    lastReportData = data; // cache so "Generate report" can reuse this instead of re-fetching
     reviewProjectLabel.textContent = data.project_name;
     reviewList.innerHTML = "";
 
@@ -319,10 +323,10 @@ async function toggleHistory(itemDiv) {
 
     panel.innerHTML = data.versions.map((v) => {
       const date = new Date(v.created_at).toLocaleString();
-      const pct = v.confidence_score != null ? `${Math.round(v.confidence_score * 100)}%` : "ΓÇö";
+      const pct = v.confidence_score != null ? `${Math.round(v.confidence_score * 100)}%` : "—";
       return `
         <div class="version-entry">
-          <p class="version-meta">v${v.version_number} ┬╖ ${pct} confidence ┬╖ ${escapeHtml(date)}</p>
+          <p class="version-meta">v${v.version_number} · ${pct} confidence · ${escapeHtml(date)}</p>
           <p class="version-text">${escapeHtml(v.translated_text)}</p>
         </div>
       `;
@@ -355,6 +359,7 @@ function startEdit(itemDiv) {
         body: JSON.stringify({ translated_text: newText }),
       });
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      lastReportData = null; // translation changed, force a fresh report fetch next time
       await loadReview();
     } catch (err) {
       alert(`Could not save the edit.\n\n${err}`);
@@ -365,9 +370,13 @@ function startEdit(itemDiv) {
 // ---- Step 5: Generate report ----
 generateReportBtn.addEventListener("click", async () => {
   try {
-    const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report`);
-    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
-    const data = await res.json();
+    let data = lastReportData;
+    if (!data) {
+      const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report`);
+      if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      data = await res.json();
+      lastReportData = data;
+    }
     renderReportDoc(data);
     reviewCard.classList.add("hidden");
     reportCard.classList.remove("hidden");
@@ -377,10 +386,24 @@ generateReportBtn.addEventListener("click", async () => {
 });
 
 function renderReportDoc(data) {
-  const translatedItems = data.requirements.map((r) =>
-    `<li><span class="category-tag">[${escapeHtml(r.category || "general")}]</span> ${escapeHtml(r.translated_text) || "(no translation)"}</li>`
-  ).join("");
-  const originalItems = data.requirements.map((r) => `<li>${escapeHtml(r.original_text)}</li>`).join("");
+  const functional = data.requirements.filter((r) => r.req_type === "Functional");
+  const nonFunctional = data.requirements.filter((r) => r.req_type === "Non-Functional");
+
+  const functionalHtml = functional.length
+    ? `<ol>${functional.map((r) => `<li>${escapeHtml(r.translated_text) || "(no translation)"}</li>`).join("")}</ol>`
+    : "<p class='report-empty'>(none)</p>";
+
+  const nfrGroups = {};
+  nonFunctional.forEach((r) => {
+    if (!nfrGroups[r.category]) nfrGroups[r.category] = [];
+    nfrGroups[r.category].push(r);
+  });
+  const nonFunctionalHtml = nonFunctional.length
+    ? Object.entries(nfrGroups).map(([cat, items]) => `
+        <h4>${escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1))}</h4>
+        <ol>${items.map((r) => `<li>${escapeHtml(r.translated_text) || "(no translation)"}</li>`).join("")}</ol>
+      `).join("")
+    : "<p class='report-empty'>(none)</p>";
 
   let redundancyHtml = "";
   if (data.redundancy_flags && data.redundancy_flags.length > 0) {
@@ -396,13 +419,35 @@ function renderReportDoc(data) {
     `;
   }
 
+  const traceRows = data.requirements.map((r) => `
+    <tr>
+      <td>${r.requirement_id}</td>
+      <td>${escapeHtml(r.req_type)}</td>
+      <td>${escapeHtml(r.translated_text) || "(no translation)"}</td>
+      <td>${escapeHtml(r.original_text)}</td>
+    </tr>
+  `).join("");
+
   reportDoc.innerHTML = `
-    <h3>${escapeHtml(data.project_name)} — System Requirements Specification</h3>
-    <ol>${translatedItems}</ol>
+    <h3>${escapeHtml(data.project_name)} — Software Requirements Specification</h3>
+
+    <h4>System Overview</h4>
+    <p>${escapeHtml(data.system_overview) || "(no requirements finalized yet)"}</p>
+
+    <h4>Functional Requirements</h4>
+    ${functionalHtml}
+
+    <h4>Non-Functional Requirements</h4>
+    ${nonFunctionalHtml}
+
     ${redundancyHtml}
+
     <div class="appendix">
-      <h3>Appendix: Original Client Requirements</h3>
-      <ol>${originalItems}</ol>
+      <h3>Requirements Traceability Matrix</h3>
+      <table class="trace-table">
+        <thead><tr><th>ID</th><th>Type</th><th>Final Requirement</th><th>Original Statement</th></tr></thead>
+        <tbody>${traceRows}</tbody>
+      </table>
     </div>
   `;
 }
@@ -422,6 +467,7 @@ newSessionBtn.addEventListener("click", () => {
   currentAnswers = [];
   discoveryIndex = 0;
   discoveryAnswers = [];
+  lastReportData = null;
 
   projectNameInput.value = "";
   requirementInput.value = "";

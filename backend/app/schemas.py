@@ -4,9 +4,8 @@ Pydantic request/response schemas — API input shapes and validation.
 Validation is applied here, at the API boundary, as defense-in-depth
 alongside frontend output escaping (see app.js escapeHtml). Text
 containing HTML/script-like patterns is rejected outright rather than
-sanitized-and-passed-through, because this project's AI prompts treat
-requirement text as trusted natural language — letting tag-like content
-through risks prompt injection, not just browser-side XSS.
+sanitized-and-passed-through, since this project's AI prompts treat
+requirement text as trusted natural language.
 """
 import re
 from pydantic import BaseModel, field_validator

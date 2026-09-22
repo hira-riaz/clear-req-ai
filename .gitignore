@@ -15,3 +15,5 @@ backend/.env
 backend/app/clearreq.db
 
 backend/clearreq.db
+
+backend/check_models.py

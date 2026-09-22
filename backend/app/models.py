@@ -15,7 +15,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
-    role = Column(String, default="analyst")  # analyst / reviewer / admin
+    role = Column(String, default="analyst")
 
 
 class Project(Base):
@@ -34,6 +34,12 @@ class Session(Base):
     project_id = Column(Integer, ForeignKey("projects.id"))
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
+    # Cache for expensive report-level AI calls (system overview,
+    # redundancy check), keyed by a hash of the translated requirement
+    # text, so repeated report views don't re-burn API quota unnecessarily.
+    cached_key = Column(String, nullable=True)
+    cached_overview = Column(Text, nullable=True)
+    cached_redundancy = Column(Text, nullable=True)
 
     project = relationship("Project", back_populates="sessions")
     requirements = relationship("Requirement", back_populates="session")
@@ -44,7 +50,7 @@ class Requirement(Base):
     id = Column(Integer, primary_key=True)
     session_id = Column(Integer, ForeignKey("sessions.id"))
     original_text = Column(Text, nullable=False)
-    status = Column(String, default="draft")  # draft / clarifying / translated / approved
+    status = Column(String, default="draft")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("Session", back_populates="requirements")
@@ -57,8 +63,8 @@ class Ambiguity(Base):
     id = Column(Integer, primary_key=True)
     requirement_id = Column(Integer, ForeignKey("requirements.id"))
     term = Column(String, nullable=False)
-    category = Column(String)          # performance / security / scope / UX
-    detector = Column(String)          # "rule" or "ai"
+    category = Column(String)
+    detector = Column(String)
     confidence = Column(Float, default=1.0)
 
     requirement = relationship("Requirement", back_populates="ambiguities")
@@ -95,6 +101,7 @@ class Approval(Base):
     approved_by = Column(String)
     approved_at = Column(DateTime, default=datetime.utcnow)
     notes = Column(Text, nullable=True)
+
 
 class DiscoveryAnswer(Base):
     __tablename__ = "discovery_answers"

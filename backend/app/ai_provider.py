@@ -33,7 +33,7 @@ Respond ONLY with a JSON array, no other text. Example:
    "question": "What is the expected response time?"}}]
 If there are no ambiguous terms, respond with []."""
 
-TRANSLATION_PROMPT = TRANSLATION_PROMPT = """Rewrite this software requirement as a single, clear,
+TRANSLATION_PROMPT = """Rewrite this software requirement as a single, clear,
 development-ready statement, incorporating the clarifications given.
 
 Project context (from discovery questions, for grounding your interpretation):
@@ -100,17 +100,52 @@ Respond ONLY with a JSON array. If there is a conflict, one entry per conflict:
 [{{"conflicts_with": "<the existing requirement text>", "question": "<a question asking the user to resolve the conflict>"}}]
 If there is no conflict, respond with []."""
 
+REDUNDANCY_PROMPT = """You are reviewing a set of finalized software
+requirements for the same system, checking whether any of them are
+redundant — i.e. describe the same underlying feature or intent, even if
+worded differently. Do NOT flag requirements that are merely related or in
+the same feature area; only flag ones that substantially overlap in what
+they ask the system to do.
+
+Requirements (numbered by their requirement_id):
+{requirements_list}
+
+Respond ONLY with a JSON array of redundant groups. Each group lists the
+requirement_ids that overlap and a short reason. Example:
+[{{"requirement_ids": [1, 2], "reason": "Both describe camera-based mood detection and playlist generation"}}]
+If there are no redundant groups, respond with []."""
+
+SYSTEM_OVERVIEW_PROMPT = """You are writing the "System Overview" section of
+a Software Requirements Specification (SRS), following ISO/IEC/IEEE 29148
+structure. This section describes the system as a coherent whole, not as a
+list of individual requirements.
+
+Project name: {project_name}
+
+Project context (from discovery questions):
+{discovery_context}
+
+All finalized requirements for this system:
+{requirements_list}
+
+Write a single, coherent 3-5 sentence overview describing what this system
+IS as a whole: its purpose, its primary users, and its key capabilities —
+synthesized from the requirements above, the way an SRS introduction would
+describe a system. Do not list requirements individually.
+
+Respond ONLY with a JSON object: {{"overview": "..."}}"""
+
 
 def _call_gemini(prompt: str) -> str:
     response = _gemini_client.models.generate_content(
-        model="gemini-2.5-flash-lite", contents=prompt
+        model="gemini-3.5-flash-lite", contents=prompt
     )
     return response.text
 
 
 def _call_groq(prompt: str) -> str:
     completion = _groq_client.chat.completions.create(
-        model="openai/gpt-oss-20b",
+        model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": prompt}],
     )
     return completion.choices[0].message.content
@@ -217,32 +252,9 @@ def check_conflicts(new_text: str, existing_requirements: list[str]) -> list[dic
     except (json.JSONDecodeError, ValueError):
         print(f"[AIProvider] Could not parse conflict-check response: {raw!r}")
         return []
-    
-
-REDUNDANCY_PROMPT = """You are reviewing a set of finalized software
-requirements for the same system, checking whether any of them are
-redundant — i.e. describe the same underlying feature or intent, even if
-worded differently. Do NOT flag requirements that are merely related or in
-the same feature area; only flag ones that substantially overlap in what
-they ask the system to do.
-
-Requirements (numbered by their requirement_id):
-{requirements_list}
-
-Respond ONLY with a JSON array of redundant groups. Each group lists the
-requirement_ids that overlap and a short reason. Example:
-[{{"requirement_ids": [1, 2], "reason": "Both describe camera-based mood detection and playlist generation"}}]
-If there are no redundant groups, respond with []."""
 
 
 def check_redundancy(requirements: list[dict]) -> list[dict]:
-    """
-    requirements: list of {"requirement_id": int, "translated_text": str}
-    Returns list of {"requirement_ids": [...], "reason": "..."} groups.
-    Run at report-generation time, not during live elicitation — redundancy
-    is a whole-document property best assessed once requirements are final,
-    not something to interrupt a live meeting over.
-    """
     if len(requirements) < 2:
         return []
     req_list = "\n".join(f"{r['requirement_id']}: {r['translated_text']}" for r in requirements)
@@ -252,3 +264,22 @@ def check_redundancy(requirements: list[dict]) -> list[dict]:
     except (json.JSONDecodeError, ValueError):
         print(f"[AIProvider] Could not parse redundancy response: {raw!r}")
         return []
+
+
+def generate_system_overview(project_name: str, discovery: list[dict], requirements: list[dict]) -> str:
+    if not requirements:
+        return "No requirements have been finalized yet for this session."
+    discovery_text = (
+        "\n".join(f"- {d['question']} -> {d['answer']}" for d in discovery if d.get("answer"))
+        if discovery else "(none provided)"
+    )
+    req_list = "\n".join(f"- {r['translated_text']}" for r in requirements)
+    raw = _call_with_fallback(
+        SYSTEM_OVERVIEW_PROMPT.format(project_name=project_name, discovery_context=discovery_text, requirements_list=req_list)
+    )
+    try:
+        result = _extract_json(raw)
+        return result.get("overview", "")
+    except (json.JSONDecodeError, ValueError):
+        print(f"[AIProvider] Could not parse system overview response: {raw!r}")
+        return ""
