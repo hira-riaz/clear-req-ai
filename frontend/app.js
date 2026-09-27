@@ -189,13 +189,14 @@ function showCurrentAmbiguity() {
     optionsHtml += `<button class="option-btn" data-answer="${escapeHtml(opt)}">${escapeHtml(opt)}</button>`;
   });
   optionsHtml += `<button class="option-btn other-btn" id="otherOptionBtn">Other...</button>`;
+  optionsHtml += `<button class="option-btn skip-answer-btn" id="skipAnswerBtn">Skip this one</button>`;
 
   const div = document.createElement("div");
-  div.className = isConflict ? "ambiguity-card conflict-card" : "ambiguity-card";
+  div.className = isConflict? "ambiguity-card conflict-card" : "ambiguity-card";
   div.innerHTML = `
     <div class="ambiguity-top">
-      <span class="term">${isConflict ? "⚠ Conflict detected" : `"${escapeHtml(a.term)}"`}</span>
-      <span class="category ${isConflict ? "conflict" : ""}">${escapeHtml(a.category)}</span>
+      <span class="term">${isConflict? "⚠ Conflict detected" : `"${escapeHtml(a.term)}"`}</span>
+      <span class="category ${isConflict? "conflict" : ""}">${escapeHtml(a.category)}</span>
     </div>
     <p class="question">${escapeHtml(a.question)}</p>
     <div class="options-list">${optionsHtml}</div>
@@ -208,13 +209,18 @@ function showCurrentAmbiguity() {
   ambiguityStepper.innerHTML = "";
   ambiguityStepper.appendChild(div);
 
-  div.querySelectorAll(".option-btn:not(.other-btn)").forEach((btn) => {
+  div.querySelectorAll(".option-btn:not(.other-btn):not(.skip-answer-btn)").forEach((btn) => {
     btn.addEventListener("click", () => recordAnswer(a.ambiguity_id, btn.dataset.answer));
   });
 
   div.querySelector("#otherOptionBtn").addEventListener("click", () => {
     div.querySelector(".other-input-row").classList.remove("hidden");
     div.querySelector(".other-input").focus();
+  });
+
+  div.querySelector("#skipAnswerBtn").addEventListener("click", () => {
+    currentAmbiguityIndex += 1;
+    showCurrentAmbiguity();
   });
 
   div.querySelector(".confirm-other-btn").addEventListener("click", () => {

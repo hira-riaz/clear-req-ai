@@ -238,3 +238,5 @@ button:disabled { background: #b4b2a9; cursor: not-allowed; }
   vertical-align: top;
 }
 .trace-table th { background: #f1efe8; }
+
+.skip-answer-btn { color: #a4321f; border-style: dashed; }
