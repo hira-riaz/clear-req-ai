@@ -1,26 +1,80 @@
 """
-Pydantic request/response schemas — API input shapes and validation.
-
-Validation is applied here, at the API boundary, as defense-in-depth
-alongside frontend output escaping (see app.js escapeHtml). Text
-containing HTML/script-like patterns is rejected outright rather than
-sanitized-and-passed-through, since this project's AI prompts treat
-requirement text as trusted natural language.
+Request schemas with validation at the API boundary. Text that looks like
+HTML/script is rejected outright: the AI prompts treat requirement text as
+trusted natural language, so tag-like input is a prompt-injection risk, not
+just a browser XSS risk.
 """
 import re
 from pydantic import BaseModel, field_validator
 
 _TAG_PATTERN = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
+_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _reject_html_like(value: str, field_name: str) -> str:
     value = value.strip()
     if _TAG_PATTERN.search(value):
-        raise ValueError(
-            f"{field_name} appears to contain HTML/script content, "
-            "which is not accepted as plain requirement text"
-        )
+        raise ValueError(f"{field_name} appears to contain HTML/script content, which is not accepted as plain text")
     return value
+
+
+class RegisterIn(BaseModel):
+    name: str
+    email: str
+    password: str
+
+    @field_validator("name")
+    @classmethod
+    def v_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 80:
+            raise ValueError("Name must be 1-80 characters")
+        return _reject_html_like(v, "Name")
+
+    @field_validator("email")
+    @classmethod
+    def v_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if len(v) > 254 or not _EMAIL_PATTERN.match(v):
+            raise ValueError("Enter a valid email address")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def v_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must be at most 128 characters")
+        return v
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def v_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class SessionIn(BaseModel):
+    project_name: str
+    client_name: str | None = None
+
+    @field_validator("project_name")
+    @classmethod
+    def v_project(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 120:
+            raise ValueError("Project name must be 1-120 characters")
+        return _reject_html_like(v, "Project name")
+
+    @field_validator("client_name")
+    @classmethod
+    def v_client(cls, v: str | None) -> str | None:
+        return None if v is None else _reject_html_like(v.strip(), "Client name")
 
 
 class RequirementIn(BaseModel):
@@ -29,7 +83,7 @@ class RequirementIn(BaseModel):
 
     @field_validator("text")
     @classmethod
-    def validate_text(cls, v: str) -> str:
+    def v_text(cls, v: str) -> str:
         v = v.strip()
         if not v:
             raise ValueError("Requirement text cannot be empty")
@@ -44,8 +98,8 @@ class ClarificationAnswer(BaseModel):
 
     @field_validator("answer")
     @classmethod
-    def validate_answer(cls, v: str) -> str:
-        return _reject_html_like(v.strip(), "Answer")
+    def v_answer(cls, v: str) -> str:
+        return _reject_html_like(v, "Answer")
 
 
 class TranslateRequest(BaseModel):
@@ -53,36 +107,25 @@ class TranslateRequest(BaseModel):
     answers: list[ClarificationAnswer]
 
 
-class SessionIn(BaseModel):
-    project_name: str
-    client_name: str | None = None
-
-    @field_validator("project_name")
-    @classmethod
-    def validate_project_name(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Project name cannot be empty")
-        return _reject_html_like(v, "Project name")
-
-    @field_validator("client_name")
-    @classmethod
-    def validate_client_name(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        return _reject_html_like(v.strip(), "Client name")
-
-
 class RequirementEdit(BaseModel):
     translated_text: str
 
     @field_validator("translated_text")
     @classmethod
-    def validate_translated_text(cls, v: str) -> str:
+    def v_text(cls, v: str) -> str:
         v = v.strip()
         if not v:
             raise ValueError("Translated text cannot be empty")
         return _reject_html_like(v, "Translated text")
+
+
+class ApproveIn(BaseModel):
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def v_notes(cls, v: str | None) -> str | None:
+        return None if not v else _reject_html_like(v, "Notes")
 
 
 class DiscoveryAnswerIn(BaseModel):
@@ -91,10 +134,8 @@ class DiscoveryAnswerIn(BaseModel):
 
     @field_validator("answer")
     @classmethod
-    def validate_answer(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        return _reject_html_like(v.strip(), "Answer")
+    def v_answer(cls, v: str | None) -> str | None:
+        return None if v is None else _reject_html_like(v, "Answer")
 
 
 class DiscoverySubmit(BaseModel):

@@ -1,85 +1,129 @@
 """
 ClearReq AI backend.
 
-Full session workflow:
-  Start session:      POST /sessions
-  Discovery:            POST /sessions/{id}/discovery
-  Detection phase:       POST /requirements/analyze
-  Resolution phase:      POST /requirements/translate
-  Review/edit:            PATCH /requirements/{id}/edit
-  Report (data):           GET  /sessions/{id}/report
-  Report (Word file):       GET  /sessions/{id}/report/docx
+Every data endpoint requires a logged-in user and checks that the session /
+requirement being touched belongs to that user. FastAPI also serves the
+frontend, so deployment is a single service.
 """
 import io
-import json
-import hashlib
+import os
 from datetime import datetime
 
-from fastapi import FastAPI, Depends
+from docx import Document
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session as DBSession
-from docx import Document
 
-from . import models, rule_detector, ai_provider
+from . import ai_provider, models, rule_detector
+from .auth import create_token, get_current_user, hash_password, verify_password
 from .database import engine, get_db
-from .schemas import RequirementIn, TranslateRequest, SessionIn, RequirementEdit, DiscoverySubmit
+from .schemas import (
+    ApproveIn, DiscoverySubmit, LoginIn, RegisterIn, RequirementEdit,
+    RequirementIn, SessionIn, TranslateRequest,
+)
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="ClearReq AI")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_origins = [o.strip() for o in os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://127.0.0.1:8000,http://localhost:8000,http://127.0.0.1:5500,http://localhost:5500",
+).split(",") if o.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"])
+
+DAILY_ANALYZE_LIMIT = int(os.getenv("DAILY_ANALYZE_LIMIT", "40"))
+_usage: dict[int, tuple[str, int]] = {}  # in-memory; resets on restart (see DEPLOY.md)
 
 
-@app.get("/")
-def root():
-    return {"status": "ClearReq AI backend running"}
+# ---------- helpers ----------
+
+def _check_rate_limit(user: models.User) -> None:
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    day, count = _usage.get(user.id, (today, 0))
+    if day != today:
+        count = 0
+    if count >= DAILY_ANALYZE_LIMIT:
+        raise HTTPException(429, f"Daily limit of {DAILY_ANALYZE_LIMIT} analyses reached. Try again tomorrow.")
+    _usage[user.id] = (today, count + 1)
 
 
-@app.post("/sessions")
-def start_session(payload: SessionIn, db: DBSession = Depends(get_db)):
-    project = models.Project(name=payload.project_name, client_name=payload.client_name)
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-
-    session = models.Session(project_id=project.id)
-    db.add(session)
-    db.commit()
-    db.refresh(session)
-
-    return {"session_id": session.id, "project_id": project.id, "project_name": project.name}
+def _owned_session(db: DBSession, session_id: int, user: models.User):
+    session = db.get(models.Session, session_id)
+    project = db.get(models.Project, session.project_id) if session else None
+    if not session or not project or project.user_id != user.id:
+        raise HTTPException(404, "Session not found")
+    return session, project
 
 
-@app.post("/sessions/{session_id}/discovery")
-def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db)):
-    for item in payload.answers:
-        db.add(models.DiscoveryAnswer(
-            session_id=session_id,
-            question=item.question,
-            answer=item.answer,
-        ))
-    db.commit()
-    return {"status": "saved", "count": len(payload.answers)}
+def _owned_requirement(db: DBSession, requirement_id: int, user: models.User):
+    req = db.get(models.Requirement, requirement_id)
+    if not req:
+        raise HTTPException(404, "Requirement not found")
+    session, project = _owned_session(db, req.session_id, user)
+    return req, session, project
+
+
+def _latest_version(db: DBSession, requirement_id: int):
+    return (
+        db.query(models.RequirementVersion)
+        .filter(models.RequirementVersion.requirement_id == requirement_id)
+        .order_by(models.RequirementVersion.version_number.desc())
+        .first()
+    )
+
+
+def _classify_fr_nfr(category: str) -> str:
+    """Heuristic: performance/security/UX clarifications imply a quality (non-functional) requirement."""
+    return "Non-Functional" if category in ("performance", "security", "UX") else "Functional"
+
+
+def _requirement_view(db: DBSession, req: models.Requirement) -> dict:
+    latest = _latest_version(db, req.id)
+    ambiguities = db.query(models.Ambiguity).filter(models.Ambiguity.requirement_id == req.id).all()
+    counts: dict[str, int] = {}
+    times = []
+    for a in ambiguities:
+        if a.category != "conflict":
+            counts[a.category] = counts.get(a.category, 0) + 1
+        if a.clarification and a.clarification.answered_at:
+            times.append(a.clarification.answered_at)
+    category = max(counts, key=counts.get) if counts else "general"
+
+    approved_by = None
+    if latest and req.status == "approved":
+        ap = (
+            db.query(models.Approval)
+            .filter(models.Approval.requirement_version_id == latest.id)
+            .order_by(models.Approval.id.desc())
+            .first()
+        )
+        approved_by = ap.approved_by if ap else None
+
+    return {
+        "requirement_id": req.id,
+        "original_text": req.original_text,
+        "status": req.status,
+        "translated_text": latest.translated_text if latest else None,
+        "category": category,
+        "req_type": _classify_fr_nfr(category),
+        "clarified_at": max(times).isoformat() if times else None,
+        "approved_by": approved_by,
+    }
 
 
 def _merge_ambiguities(rule_results: list[dict], ai_results: list[dict]) -> list[dict]:
     by_term = {r["term"].lower(): r for r in rule_results}
     for r in ai_results:
-        key = r["term"].lower()
-        if key not in by_term:
-            by_term[key] = r
+        by_term.setdefault(r["term"].lower(), r)
     return list(by_term.values())
 
 
-def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id: int, term: str) -> str | None:
-    result = (
+def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id: int, term: str):
+    row = (
         db.query(models.Clarification)
         .join(models.Ambiguity, models.Clarification.ambiguity_id == models.Ambiguity.id)
         .join(models.Requirement, models.Ambiguity.requirement_id == models.Requirement.id)
@@ -90,84 +134,157 @@ def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id
         .order_by(models.Clarification.answered_at.desc())
         .first()
     )
-    return result.answer if result else None
+    return row.answer if row else None
 
 
-def _classify_fr_nfr(category: str) -> str:
-    """
-    Heuristic FR/NFR classification based on which ambiguity category
-    dominated a requirement's clarification. A simplification — the RE
-    literature notes the FR/NFR boundary is often not clear-cut in
-    practice. Documented explicitly as a heuristic, not a definitive
-    classifier.
-    """
-    return "Non-Functional" if category in ("performance", "security", "UX") else "Functional"
-
-
-def _compute_cache_key(translated: list[dict]) -> str:
-    joined = "|".join(
-        f"{t['requirement_id']}:{t['translated_text']}"
-        for t in sorted(translated, key=lambda x: x["requirement_id"])
-    )
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
-
-
-def _get_overview_and_redundancy(db: DBSession, session: models.Session, project_name: str,
-                                  discovery_data: list[dict], translated_for_analysis: list[dict]):
-    """
-    Computes, or reuses a cached, system overview and redundancy flags for
-    a session — both expensive AI calls that only need to change when the
-    set of translated requirements changes.
-    """
-    cache_key = _compute_cache_key(translated_for_analysis)
-
-    if session.cached_key == cache_key and session.cached_overview is not None:
-        redundancy = json.loads(session.cached_redundancy) if session.cached_redundancy else []
-        return session.cached_overview, redundancy
-
-    overview = ai_provider.generate_system_overview(project_name, discovery_data, translated_for_analysis)
-    redundancy = ai_provider.check_redundancy(translated_for_analysis)
-
-    session.cached_key = cache_key
-    session.cached_overview = overview
-    session.cached_redundancy = json.dumps(redundancy)
+def _delete_session_cascade(db: DBSession, session: models.Session, project: models.Project) -> None:
+    for req in db.query(models.Requirement).filter(models.Requirement.session_id == session.id).all():
+        amb_ids = [i for (i,) in db.query(models.Ambiguity.id).filter(models.Ambiguity.requirement_id == req.id)]
+        if amb_ids:
+            db.query(models.Clarification).filter(models.Clarification.ambiguity_id.in_(amb_ids)).delete(synchronize_session=False)
+        db.query(models.Ambiguity).filter(models.Ambiguity.requirement_id == req.id).delete(synchronize_session=False)
+        ver_ids = [i for (i,) in db.query(models.RequirementVersion.id).filter(models.RequirementVersion.requirement_id == req.id)]
+        if ver_ids:
+            db.query(models.Approval).filter(models.Approval.requirement_version_id.in_(ver_ids)).delete(synchronize_session=False)
+        db.query(models.RequirementVersion).filter(models.RequirementVersion.requirement_id == req.id).delete(synchronize_session=False)
+        db.delete(req)
+    db.query(models.DiscoveryAnswer).filter(models.DiscoveryAnswer.session_id == session.id).delete(synchronize_session=False)
+    db.delete(session)
+    db.flush()
+    if db.query(models.Session).filter(models.Session.project_id == project.id).count() == 0:
+        db.delete(project)
     db.commit()
 
-    return overview, redundancy
 
+# ---------- health + auth ----------
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+def _user_out(u: models.User) -> dict:
+    return {"id": u.id, "name": u.name, "email": u.email}
+
+
+@app.post("/auth/register")
+def register(payload: RegisterIn, db: DBSession = Depends(get_db)):
+    if db.query(models.User).filter(models.User.email == payload.email).first():
+        raise HTTPException(409, "An account with this email already exists")
+    user = models.User(name=payload.name, email=payload.email, password_hash=hash_password(payload.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {"token": create_token(user.id), "user": _user_out(user)}
+
+
+@app.post("/auth/login")
+def login(payload: LoginIn, db: DBSession = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(401, "Incorrect email or password")
+    return {"token": create_token(user.id), "user": _user_out(user)}
+
+
+@app.get("/auth/me")
+def me(user: models.User = Depends(get_current_user)):
+    return _user_out(user)
+
+
+# ---------- sessions (sidebar) ----------
+
+@app.post("/sessions")
+def start_session(payload: SessionIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    project = models.Project(name=payload.project_name, client_name=payload.client_name, user_id=user.id)
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    session = models.Session(project_id=project.id)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {"session_id": session.id, "project_id": project.id, "project_name": project.name}
+
+
+@app.get("/sessions")
+def list_sessions(db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    rows = (
+        db.query(models.Session, models.Project)
+        .join(models.Project, models.Session.project_id == models.Project.id)
+        .filter(models.Project.user_id == user.id)
+        .order_by(models.Session.started_at.desc())
+        .all()
+    )
+    stats: dict[int, tuple[int, int]] = {}
+    ids = [s.id for s, _ in rows]
+    if ids:
+        done = case((models.Requirement.status.in_(["translated", "approved"]), 1), else_=0)
+        for sid, total, finished in (
+            db.query(models.Requirement.session_id, func.count(models.Requirement.id), func.sum(done))
+            .filter(models.Requirement.session_id.in_(ids))
+            .group_by(models.Requirement.session_id)
+            .all()
+        ):
+            stats[sid] = (int(total), int(finished or 0))
+    return [
+        {
+            "session_id": s.id,
+            "project_name": p.name,
+            "started_at": s.started_at.isoformat(),
+            "requirement_count": stats.get(s.id, (0, 0))[0],
+            "translated_count": stats.get(s.id, (0, 0))[1],
+        }
+        for s, p in rows
+    ]
+
+
+@app.patch("/sessions/{session_id}")
+def rename_session(session_id: int, payload: SessionIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _, project = _owned_session(db, session_id, user)
+    project.name = payload.project_name
+    db.commit()
+    return {"session_id": session_id, "project_name": project.name}
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    session, project = _owned_session(db, session_id, user)
+    _delete_session_cascade(db, session, project)
+    return {"status": "deleted"}
+
+
+@app.post("/sessions/{session_id}/discovery")
+def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _owned_session(db, session_id, user)
+    for item in payload.answers:
+        db.add(models.DiscoveryAnswer(session_id=session_id, question=item.question, answer=item.answer))
+    db.commit()
+    return {"status": "saved", "count": len(payload.answers)}
+
+
+# ---------- requirements ----------
 
 @app.post("/requirements/analyze")
-def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db)):
-    requirement = models.Requirement(
-        session_id=payload.session_id,
-        original_text=payload.text,
-        status="clarifying",
-    )
+def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _owned_session(db, payload.session_id, user)
+    _check_rate_limit(user)
+
+    requirement = models.Requirement(session_id=payload.session_id, original_text=payload.text, status="clarifying")
     db.add(requirement)
     db.commit()
     db.refresh(requirement)
 
-    rule_results = rule_detector.detect(payload.text)
-    ai_results = ai_provider.detect_ambiguity(payload.text)
-    merged = _merge_ambiguities(rule_results, ai_results)
+    merged = _merge_ambiguities(rule_detector.detect(payload.text), ai_provider.detect_ambiguity(payload.text))
 
-    other_requirements = (
-        db.query(models.Requirement)
-        .filter(models.Requirement.session_id == payload.session_id)
-        .filter(models.Requirement.id != requirement.id)
-        .all()
-    )
     existing_texts = []
-    for r in other_requirements:
-        latest = (
-            db.query(models.RequirementVersion)
-            .filter(models.RequirementVersion.requirement_id == r.id)
-            .order_by(models.RequirementVersion.version_number.desc())
-            .first()
-        )
-        existing_texts.append(latest.translated_text if latest else r.original_text)
-    conflicts = ai_provider.check_conflicts(payload.text, existing_texts)
-    for c in conflicts:
+    for other in (
+        db.query(models.Requirement)
+        .filter(models.Requirement.session_id == payload.session_id, models.Requirement.id != requirement.id)
+        .all()
+    ):
+        latest = _latest_version(db, other.id)
+        existing_texts.append(latest.translated_text if latest else other.original_text)
+    for c in ai_provider.check_conflicts(payload.text, existing_texts):
         merged.append({
             "term": f"conflict with: {c['conflicts_with'][:60]}",
             "category": "conflict",
@@ -181,132 +298,109 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db))
     saved = []
     for item in merged:
         ambiguity = models.Ambiguity(
-            requirement_id=requirement.id,
-            term=item["term"],
-            category=item["category"],
-            detector=item["detector"],
-            confidence=item["confidence"],
+            requirement_id=requirement.id, term=item["term"], category=item["category"],
+            detector=item["detector"], confidence=item["confidence"],
         )
         db.add(ambiguity)
         db.commit()
         db.refresh(ambiguity)
-
-        clarification = models.Clarification(
-            ambiguity_id=ambiguity.id,
-            question=item["question"],
-        )
+        clarification = models.Clarification(ambiguity_id=ambiguity.id, question=item["question"])
         db.add(clarification)
         db.commit()
-
-        suggested_answer = None
-        if item["category"] != "conflict":
-            suggested_answer = _find_previous_answer(db, payload.session_id, requirement.id, item["term"])
-
         saved.append({
             "ambiguity_id": ambiguity.id,
             "term": ambiguity.term,
             "category": ambiguity.category,
             "detector": ambiguity.detector,
-            "confidence": ambiguity.confidence,
             "question": clarification.question,
-            "suggested_answer": suggested_answer,
+            "suggested_answer": None if item["category"] == "conflict"
+            else _find_previous_answer(db, payload.session_id, requirement.id, item["term"]),
             "options": answer_options.get(item["term"], []),
         })
-
     return {"requirement_id": requirement.id, "ambiguities": saved}
 
 
 @app.post("/requirements/translate")
-def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get_db)):
-    requirement = db.get(models.Requirement, payload.requirement_id)
+def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    requirement, session, _ = _owned_requirement(db, payload.requirement_id, user)
 
-    clarifications_for_prompt = []
+    clarifications = []
     for ans in payload.answers:
         clarification = (
             db.query(models.Clarification)
-            .filter(models.Clarification.ambiguity_id == ans.ambiguity_id)
+            .join(models.Ambiguity, models.Clarification.ambiguity_id == models.Ambiguity.id)
+            .filter(models.Clarification.ambiguity_id == ans.ambiguity_id, models.Ambiguity.requirement_id == requirement.id)
             .first()
         )
+        if not clarification:
+            raise HTTPException(404, "Unknown clarification for this requirement")
         clarification.answer = ans.answer
         clarification.answered_at = datetime.utcnow()
-        db.commit()
-        clarifications_for_prompt.append({
-            "term": clarification.ambiguity.term,
-            "question": clarification.question,
-            "answer": ans.answer,
-        })
+        clarifications.append({"term": clarification.ambiguity.term, "question": clarification.question, "answer": ans.answer})
+    db.commit()
 
-    context_versions = (
-        db.query(models.RequirementVersion)
-        .join(models.Requirement)
-        .filter(models.Requirement.session_id == requirement.session_id)
-        .filter(models.Requirement.id != requirement.id)
+    context_texts = []
+    for other in (
+        db.query(models.Requirement)
+        .filter(models.Requirement.session_id == session.id, models.Requirement.id != requirement.id)
         .all()
-    )
-    context_texts = [v.translated_text for v in context_versions]
+    ):
+        latest = _latest_version(db, other.id)
+        if latest:
+            context_texts.append(latest.translated_text)
+    discovery = [
+        {"question": d.question, "answer": d.answer}
+        for d in db.query(models.DiscoveryAnswer).filter(models.DiscoveryAnswer.session_id == session.id).all()
+    ]
 
-    discovery_answers = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == requirement.session_id)
-        .all()
-    )
-    discovery_data = [{"question": d.question, "answer": d.answer} for d in discovery_answers]
+    result = ai_provider.translate_and_verify(requirement.original_text, clarifications, context_texts, discovery)
 
-    result = ai_provider.translate_and_verify(requirement.original_text, clarifications_for_prompt, context_texts, discovery_data)
-
-    existing_versions = (
-        db.query(models.RequirementVersion)
-        .filter(models.RequirementVersion.requirement_id == requirement.id)
-        .count()
-    )
+    count = db.query(models.RequirementVersion).filter(models.RequirementVersion.requirement_id == requirement.id).count()
     version = models.RequirementVersion(
-        requirement_id=requirement.id,
-        version_number=existing_versions + 1,
-        translated_text=result["translated_text"],
-        confidence_score=result["confidence"],
+        requirement_id=requirement.id, version_number=count + 1,
+        translated_text=result["translated_text"], confidence_score=result["confidence"],
     )
     db.add(version)
     requirement.status = "translated"
     db.commit()
     db.refresh(version)
-
-    return {
-        "requirement_id": requirement.id,
-        "version_number": version.version_number,
-        "translated_text": version.translated_text,
-        "confidence_score": version.confidence_score,
-    }
+    return {"requirement_id": requirement.id, "version_number": version.version_number, "translated_text": version.translated_text}
 
 
 @app.patch("/requirements/{requirement_id}/edit")
-def edit_requirement_translation(requirement_id: int, payload: RequirementEdit, db: DBSession = Depends(get_db)):
-    existing_versions = (
-        db.query(models.RequirementVersion)
-        .filter(models.RequirementVersion.requirement_id == requirement_id)
-        .count()
-    )
+def edit_requirement_translation(requirement_id: int, payload: RequirementEdit, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    requirement, _, _ = _owned_requirement(db, requirement_id, user)
+    count = db.query(models.RequirementVersion).filter(models.RequirementVersion.requirement_id == requirement.id).count()
     version = models.RequirementVersion(
-        requirement_id=requirement_id,
-        version_number=existing_versions + 1,
-        translated_text=payload.translated_text,
-        confidence_score=1.0,
+        requirement_id=requirement.id, version_number=count + 1,
+        translated_text=payload.translated_text, confidence_score=1.0,
     )
     db.add(version)
+    requirement.status = "translated"  # an edit invalidates any earlier approval
     db.commit()
     db.refresh(version)
-    return {
-        "requirement_id": requirement_id,
-        "version_number": version.version_number,
-        "translated_text": version.translated_text,
-    }
+    return {"requirement_id": requirement.id, "version_number": version.version_number, "translated_text": version.translated_text}
+
+
+@app.post("/requirements/{requirement_id}/approve")
+def approve_requirement(requirement_id: int, payload: ApproveIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    requirement, _, _ = _owned_requirement(db, requirement_id, user)
+    latest = _latest_version(db, requirement.id)
+    if not latest:
+        raise HTTPException(400, "Nothing to approve yet")
+    db.add(models.Approval(requirement_version_id=latest.id, approved_by=user.name, notes=payload.notes))
+    requirement.status = "approved"
+    db.commit()
+    return {"requirement_id": requirement.id, "status": "approved", "approved_by": user.name}
 
 
 @app.get("/requirements/{requirement_id}")
-def get_requirement(requirement_id: int, db: DBSession = Depends(get_db)):
-    requirement = db.get(models.Requirement, requirement_id)
+def get_requirement(requirement_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    requirement, _, _ = _owned_requirement(db, requirement_id, user)
     versions = (
         db.query(models.RequirementVersion)
-        .filter(models.RequirementVersion.requirement_id == requirement_id)
+        .filter(models.RequirementVersion.requirement_id == requirement.id)
+        .order_by(models.RequirementVersion.version_number.desc())
         .all()
     )
     return {
@@ -316,205 +410,63 @@ def get_requirement(requirement_id: int, db: DBSession = Depends(get_db)):
         "versions": [
             {"version_number": v.version_number, "translated_text": v.translated_text,
              "confidence_score": v.confidence_score, "created_at": v.created_at.isoformat()}
-            for v in sorted(versions, key=lambda v: v.version_number, reverse=True)
+            for v in versions
         ],
     }
 
 
+# ---------- report ----------
+
+def _report_items(db: DBSession, session_id: int) -> list[dict]:
+    reqs = db.query(models.Requirement).filter(models.Requirement.session_id == session_id).order_by(models.Requirement.id).all()
+    return [_requirement_view(db, r) for r in reqs]
+
+
 @app.get("/sessions/{session_id}/report")
-def get_session_report(session_id: int, db: DBSession = Depends(get_db)):
-    session = db.get(models.Session, session_id)
-    project = db.get(models.Project, session.project_id) if session else None
-
-    requirements = (
-        db.query(models.Requirement)
-        .filter(models.Requirement.session_id == session_id)
-        .all()
-    )
-
-    items = []
-    translated_for_analysis = []
-    for r in requirements:
-        latest = (
-            db.query(models.RequirementVersion)
-            .filter(models.RequirementVersion.requirement_id == r.id)
-            .order_by(models.RequirementVersion.version_number.desc())
-            .first()
-        )
-
-        ambiguities = (
-            db.query(models.Ambiguity)
-            .filter(models.Ambiguity.requirement_id == r.id)
-            .filter(models.Ambiguity.category != "conflict")
-            .all()
-        )
-        category_counts: dict[str, int] = {}
-        for a in ambiguities:
-            category_counts[a.category] = category_counts.get(a.category, 0) + 1
-        dominant_category = max(category_counts, key=category_counts.get) if category_counts else "general"
-
-        items.append({
-            "requirement_id": r.id,
-            "original_text": r.original_text,
-            "status": r.status,
-            "translated_text": latest.translated_text if latest else None,
-            "confidence_score": latest.confidence_score if latest else None,
-            "category": dominant_category,
-            "req_type": _classify_fr_nfr(dominant_category),
-        })
-        if latest:
-            translated_for_analysis.append({"requirement_id": r.id, "translated_text": latest.translated_text})
-
-    discovery = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == session_id)
-        .all()
-    )
-    discovery_data = [{"question": d.question, "answer": d.answer} for d in discovery]
-
-    system_overview, redundancy_flags = _get_overview_and_redundancy(
-        db, session, project.name if project else "System", discovery_data, translated_for_analysis
-    )
-
-    return {
-        "session_id": session_id,
-        "project_name": project.name if project else None,
-        "system_overview": system_overview,
-        "requirements": items,
-        "discovery": discovery_data,
-        "redundancy_flags": redundancy_flags,
-    }
+def get_session_report(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _, project = _owned_session(db, session_id, user)
+    return {"session_id": session_id, "project_name": project.name, "requirements": _report_items(db, session_id)}
 
 
 @app.get("/sessions/{session_id}/report/docx")
-def download_report_docx(session_id: int, db: DBSession = Depends(get_db)):
-    session = db.get(models.Session, session_id)
-    project = db.get(models.Project, session.project_id) if session else None
-    requirements = (
-        db.query(models.Requirement)
-        .filter(models.Requirement.session_id == session_id)
-        .all()
-    )
-
-    discovery = (
-        db.query(models.DiscoveryAnswer)
-        .filter(models.DiscoveryAnswer.session_id == session_id)
-        .all()
-    )
-    discovery_data = [{"question": d.question, "answer": d.answer} for d in discovery]
-
-    enriched = []
-    for r in requirements:
-        latest = (
-            db.query(models.RequirementVersion)
-            .filter(models.RequirementVersion.requirement_id == r.id)
-            .order_by(models.RequirementVersion.version_number.desc())
-            .first()
-        )
-        ambiguities = (
-            db.query(models.Ambiguity)
-            .filter(models.Ambiguity.requirement_id == r.id)
-            .filter(models.Ambiguity.category != "conflict")
-            .all()
-        )
-        category_counts: dict[str, int] = {}
-        for a in ambiguities:
-            category_counts[a.category] = category_counts.get(a.category, 0) + 1
-        dominant_category = max(category_counts, key=category_counts.get) if category_counts else "general"
-        enriched.append({
-            "requirement_id": r.id,
-            "original_text": r.original_text,
-            "translated_text": latest.translated_text if latest else "(no translation)",
-            "category": dominant_category,
-            "req_type": _classify_fr_nfr(dominant_category),
-        })
-
-    translated_for_analysis = [
-        {"requirement_id": e["requirement_id"], "translated_text": e["translated_text"]}
-        for e in enriched if e["translated_text"] != "(no translation)"
-    ]
-    system_overview, redundancy_flags = _get_overview_and_redundancy(
-        db, session, project.name if project else "System", discovery_data, translated_for_analysis
-    )
+def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    _, project = _owned_session(db, session_id, user)
+    items = _report_items(db, session_id)
 
     doc = Document()
-    title = project.name if project else "ClearReq AI Report"
-    doc.add_heading(f"{title} — Software Requirements Specification", level=1)
+    doc.add_heading(f"{project.name} — Requirements", level=1)
     doc.add_paragraph(f"Generated by ClearReq AI on {datetime.utcnow().strftime('%Y-%m-%d')}")
-    doc.add_paragraph(
-        "This document follows the ISO/IEC/IEEE 29148 requirements "
-        "engineering standard's convention of a system overview followed "
-        "by functional and non-functional requirements, with full "
-        "traceability to original stakeholder wording."
-    )
 
-    if discovery_data:
-        doc.add_heading("Project Discovery", level=2)
-        for d in discovery_data:
-            doc.add_paragraph(f"{d['question']} — {d['answer'] or '(skipped)'}")
-
-    doc.add_heading("System Overview", level=2)
-    doc.add_paragraph(system_overview or "(no requirements finalized yet)")
-
-    functional = [e for e in enriched if e["req_type"] == "Functional"]
-    non_functional = [e for e in enriched if e["req_type"] == "Non-Functional"]
+    def write_list(entries: list[dict]) -> None:
+        if not entries:
+            doc.add_paragraph("(none)")
+        for i, e in enumerate(entries, 1):
+            doc.add_paragraph(f"{i}. {e['translated_text'] or '(no translation)'}")
 
     doc.add_heading("Functional Requirements", level=2)
-    if functional:
-        for e in functional:
-            doc.add_paragraph(e["translated_text"], style="List Number")
-    else:
-        doc.add_paragraph("(none)")
+    write_list([e for e in items if e["req_type"] == "Functional"])
 
     doc.add_heading("Non-Functional Requirements", level=2)
-    if non_functional:
-        nfr_groups: dict[str, list] = {}
-        for e in non_functional:
-            nfr_groups.setdefault(e["category"], []).append(e)
-        for cat, group in nfr_groups.items():
-            doc.add_heading(cat.capitalize(), level=3)
-            for e in group:
-                doc.add_paragraph(e["translated_text"], style="List Number")
-    else:
+    nfr = [e for e in items if e["req_type"] == "Non-Functional"]
+    if not nfr:
         doc.add_paragraph("(none)")
-
-    if redundancy_flags:
-        doc.add_heading("Possible Redundant Requirements", level=2)
-        doc.add_paragraph(
-            "The following requirement groups were flagged as potentially "
-            "overlapping in intent and may be worth merging or reviewing:"
-        )
-        for group in redundancy_flags:
-            ids_str = ", ".join(f"#{i}" for i in group.get("requirement_ids", []))
-            doc.add_paragraph(f"{ids_str}: {group.get('reason', '')}", style="List Bullet")
-
-    doc.add_page_break()
-    doc.add_heading("Requirements Traceability Matrix", level=2)
-    doc.add_paragraph(
-        "Every finalized requirement below is traceable to the client's "
-        "original wording, preserving the source of each stated need."
-    )
-    table = doc.add_table(rows=1, cols=4)
-    table.style = "Light Grid Accent 1"
-    hdr = table.rows[0].cells
-    hdr[0].text = "ID"
-    hdr[1].text = "Type"
-    hdr[2].text = "Final Requirement"
-    hdr[3].text = "Original Client Statement"
-    for e in enriched:
-        row = table.add_row().cells
-        row[0].text = str(e["requirement_id"])
-        row[1].text = e["req_type"]
-        row[2].text = e["translated_text"]
-        row[3].text = e["original_text"]
+    for cat in sorted({e["category"] for e in nfr}):
+        doc.add_heading(cat.capitalize(), level=3)
+        write_list([e for e in nfr if e["category"] == cat])
 
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
-
-    safe_title = (project.name if project else "clearreq").replace(" ", "_")
+    safe = "".join(c if c.isalnum() else "_" for c in project.name)[:60] or "requirements"
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={safe_title}_report.docx"},
+        headers={"Content-Disposition": f'attachment; filename="{safe}_requirements.docx"'},
     )
+
+
+# ---------- frontend (must be mounted last) ----------
+
+_FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend")
+if os.path.isdir(_FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")

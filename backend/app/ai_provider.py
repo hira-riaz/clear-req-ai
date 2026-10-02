@@ -1,7 +1,6 @@
-"""
-AIProvider — wraps calls to Gemini (primary) and Groq (fallback) behind a
-single interface. See docs/enhanced_blueprint.md section 5 for reasoning.
-"""
+"""AIProvider: Gemini (primary) -> Groq (fallback), one seam for all AI calls.
+Model names are read from env so a provider deprecating a model is a config
+change, not a code change (this has happened twice during development)."""
 import os
 import json
 from google import genai
@@ -13,141 +12,61 @@ load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
-_gemini_client = (
-    genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 30000})
-    if GEMINI_API_KEY else None
-)
+_gemini_client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 30000}) if GEMINI_API_KEY else None
 _groq_client = Groq(api_key=GROQ_API_KEY, timeout=30.0) if GROQ_API_KEY else None
 
 DETECTION_PROMPT = """You are analysing a software requirement for ambiguity.
 Requirement: "{text}"
-
-Identify every term whose meaning is not objectively measurable (e.g. "fast",
-"secure", "easy" without a concrete definition). For each one, return an
-entry with: term, category (performance/security/scope/UX), confidence
-(0-1), and a short clarification question.
-
-Respond ONLY with a JSON array, no other text. Example:
-[{{"term": "fast", "category": "performance", "confidence": 0.9,
-   "question": "What is the expected response time?"}}]
-If there are no ambiguous terms, respond with []."""
+Identify every term whose meaning is not objectively measurable. For each,
+return term, category (performance/security/scope/UX), confidence (0-1),
+and a short clarification question.
+Respond ONLY with a JSON array, e.g.
+[{{"term": "fast", "category": "performance", "confidence": 0.9, "question": "What is the expected response time?"}}]
+If none, respond with []."""
 
 TRANSLATION_PROMPT = """Rewrite this software requirement as a single, clear,
 development-ready statement, incorporating the clarifications given.
 
-Project context (from discovery questions, for grounding your interpretation):
-{discovery_context}
-
+Project context (from discovery questions): {discovery_context}
 Original requirement: "{text}"
+Clarifications: {clarifications}
+Other already-translated requirements (for terminology consistency only, do not repeat them): {context}
 
-Clarifications:
-{clarifications}
-
-Other already-translated requirements for this system (for terminology
-consistency only — do not repeat them): {context}
-
-CRITICAL RULES:
-- Produce exactly ONE coherent requirement statement. Never include
-  contradictory clauses (e.g. "shall X, but shall not X").
-- If a clarification resolves a conflict with another requirement, the
-  clarification's answer OVERRIDES the original wording on that point —
-  do not try to preserve both the original phrasing and the resolution at
-  once. State only the resolved version.
-- PRESERVE the strength and polarity of absolute or exclusive claims in
-  the original requirement (e.g. "must never", "only", "offline-first",
-  "online-first", "always", "no internet required") unless a clarification
-  answer explicitly asks you to soften, qualify, or hybridize that claim.
-  Do NOT default to hedged, compatible-sounding language ("when available",
-  "where possible") just because it sounds more reasonable — if the client
-  stated a hard constraint and nothing in the clarifications changed it,
-  keep it hard.
-- If a clarification answer is vague or doesn't fully resolve the
-  ambiguity, still produce a single clear statement using your best
-  reasonable interpretation, and lower the confidence score accordingly —
-  do not hedge inside the sentence itself.
-
+RULES:
+- Exactly ONE coherent statement. Never "shall X, but shall not X".
+- A clarification resolving a conflict OVERRIDES the original wording on that point.
+- PRESERVE absolute/exclusive claims ("must never", "only", "offline-first") unless
+  a clarification explicitly softens them. Do not hedge by default.
+- If an answer is vague, still write one clear statement and lower confidence
+  rather than hedging inside the sentence.
 Respond ONLY with a JSON object: {{"translated_text": "...", "confidence": 0.0-1.0}}"""
 
-OPTIONS_PROMPT = """You are helping a requirements engineer quickly resolve
-ambiguity during a live client meeting. For each flagged ambiguous term
-below, generate 3-4 short, concrete, mutually distinct answer options a
-client could pick from to clarify what they mean. Options should be plain
-language, under 10 words each, and meaningfully different from each other.
-
+OPTIONS_PROMPT = """For each ambiguous term below, generate 3-4 short,
+concrete, mutually distinct answer options a client could pick from live in
+a meeting. Under 10 words each.
 Requirement: "{text}"
+Terms and questions: {terms_list}
+Respond ONLY with a JSON object mapping each term to a list of options."""
 
-Ambiguous terms and their clarification questions:
-{terms_list}
-
-Respond ONLY with a JSON object mapping each term to a list of option
-strings, e.g.:
-{{"clean": ["Minimal, uncluttered UI", "Easy to navigate", "Consistent visual style", "Modern look and feel"]}}"""
-
-CONFLICT_PROMPT = """You are checking whether a new software requirement
-conflicts with requirements already agreed upon for the same system.
-
+CONFLICT_PROMPT = """Does this new requirement contradict, duplicate, or
+conflict with any already-approved requirement below? Only flag a genuine
+contradiction, not a related topic.
 New requirement: "{new_text}"
-
-Already-approved requirements for this system:
-{existing_list}
-
-Does the new requirement contradict, duplicate the intent of, or conflict
-with any of the already-approved requirements above? Only flag a genuine
-contradiction, not simply a related or overlapping topic.
-
-Respond ONLY with a JSON array. If there is a conflict, one entry per conflict:
-[{{"conflicts_with": "<the existing requirement text>", "question": "<a question asking the user to resolve the conflict>"}}]
-If there is no conflict, respond with []."""
-
-REDUNDANCY_PROMPT = """You are reviewing a set of finalized software
-requirements for the same system, checking whether any of them are
-redundant — i.e. describe the same underlying feature or intent, even if
-worded differently. Do NOT flag requirements that are merely related or in
-the same feature area; only flag ones that substantially overlap in what
-they ask the system to do.
-
-Requirements (numbered by their requirement_id):
-{requirements_list}
-
-Respond ONLY with a JSON array of redundant groups. Each group lists the
-requirement_ids that overlap and a short reason. Example:
-[{{"requirement_ids": [1, 2], "reason": "Both describe camera-based mood detection and playlist generation"}}]
-If there are no redundant groups, respond with []."""
-
-SYSTEM_OVERVIEW_PROMPT = """You are writing the "System Overview" section of
-a Software Requirements Specification (SRS), following ISO/IEC/IEEE 29148
-structure. This section describes the system as a coherent whole, not as a
-list of individual requirements.
-
-Project name: {project_name}
-
-Project context (from discovery questions):
-{discovery_context}
-
-All finalized requirements for this system:
-{requirements_list}
-
-Write a single, coherent 3-5 sentence overview describing what this system
-IS as a whole: its purpose, its primary users, and its key capabilities —
-synthesized from the requirements above, the way an SRS introduction would
-describe a system. Do not list requirements individually.
-
-Respond ONLY with a JSON object: {{"overview": "..."}}"""
+Already-approved requirements: {existing_list}
+Respond ONLY with a JSON array, one entry per conflict:
+[{{"conflicts_with": "<text>", "question": "<question to resolve it>"}}]
+If none, respond with []."""
 
 
 def _call_gemini(prompt: str) -> str:
-    response = _gemini_client.models.generate_content(
-        model="gemini-3.5-flash-lite", contents=prompt
-    )
-    return response.text
+    return _gemini_client.models.generate_content(model=GEMINI_MODEL, contents=prompt).text
 
 
 def _call_groq(prompt: str) -> str:
-    completion = _groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-    )
+    completion = _groq_client.chat.completions.create(model=GROQ_MODEL, messages=[{"role": "user", "content": prompt}])
     return completion.choices[0].message.content
 
 
@@ -159,127 +78,64 @@ def _call_with_fallback(prompt: str) -> str:
             print(f"[AIProvider] Gemini failed ({e}), falling back to Groq")
     if _groq_client:
         return _call_groq(prompt)
-    raise RuntimeError("No AI provider available — check your .env API keys")
+    raise RuntimeError("No AI provider available — check API keys")
 
 
-def _extract_json(raw_text: str):
-    cleaned = raw_text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+def _extract_json(raw: str):
+    cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     return json.loads(cleaned)
 
 
 def detect_ambiguity(text: str) -> list[dict]:
-    raw = _call_with_fallback(DETECTION_PROMPT.format(text=text))
     try:
-        results = _extract_json(raw)
+        results = _extract_json(_call_with_fallback(DETECTION_PROMPT.format(text=text)))
     except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse detection response: {raw!r}")
         return []
     for r in results:
         r["detector"] = "ai"
     return results
 
 
-def translate(text: str, clarifications: list[dict], context: list[str] | None = None,
-              discovery: list[dict] | None = None) -> dict:
+def translate(text: str, clarifications: list[dict], context: list[str] | None = None, discovery: list[dict] | None = None) -> dict:
     clar_text = "\n".join(f"- {c['question']} -> {c['answer']}" for c in clarifications)
     context_text = "\n".join(f"- {c}" for c in context) if context else "(none yet)"
-    discovery_text = (
-        "\n".join(f"- {d['question']} -> {d['answer']}" for d in discovery if d.get("answer"))
-        if discovery else "(none provided)"
-    )
-    raw = _call_with_fallback(
-        TRANSLATION_PROMPT.format(text=text, clarifications=clar_text, context=context_text,
-                                   discovery_context=discovery_text)
-    )
+    discovery_text = "\n".join(f"- {d['question']} -> {d['answer']}" for d in discovery if d.get("answer")) if discovery else "(none provided)"
     try:
-        return _extract_json(raw)
+        return _extract_json(_call_with_fallback(TRANSLATION_PROMPT.format(
+            text=text, clarifications=clar_text, context=context_text, discovery_context=discovery_text)))
     except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse translation response: {raw!r}")
         return {"translated_text": text, "confidence": 0.0}
 
 
-def translate_and_verify(text: str, clarifications: list[dict], context: list[str] | None = None,
-                          discovery: list[dict] | None = None) -> dict:
-    """
-    Translates, then re-runs rule-based detection on the OUTPUT to check
-    whether the AI reintroduced ambiguity during composition. Retries once
-    with an explicit correction instruction if so; if still unresolved,
-    accepts the result but honestly lowers its confidence score.
-    """
+def translate_and_verify(text: str, clarifications: list[dict], context=None, discovery=None) -> dict:
     result = translate(text, clarifications, context, discovery)
     leftover = rule_detector.detect(result["translated_text"])
-
     if leftover:
-        leftover_terms = ", ".join(f'"{item["term"]}"' for item in leftover)
-        retry_clarifications = clarifications + [{
-            "term": "output review",
-            "question": "avoid vague terms in the final text",
-            "answer": (
-                f"Your previous draft still contained vague terms: {leftover_terms}. "
-                f"Rewrite it using the specific values already given in the clarifications "
-                f"above — do not use vague placeholders like 'a certain threshold'."
-            ),
-        }]
-        result = translate(text, retry_clarifications, context, discovery)
-
-        still_leftover = rule_detector.detect(result["translated_text"])
-        if still_leftover:
+        terms = ", ".join(f'"{i["term"]}"' for i in leftover)
+        retry = clarifications + [{"term": "output review", "question": "avoid vague terms",
+                                    "answer": f"Still vague: {terms}. Rewrite using the specifics already given — no placeholders."}]
+        result = translate(text, retry, context, discovery)
+        if rule_detector.detect(result["translated_text"]):
             result["confidence"] = min(result.get("confidence", 1.0), 0.5)
-
     return result
 
 
 def generate_answer_options(text: str, ambiguities: list[dict]) -> dict:
-    real_terms = [a for a in ambiguities if a["category"] != "conflict"]
-    if not real_terms:
+    real = [a for a in ambiguities if a["category"] != "conflict"]
+    if not real:
         return {}
-    terms_list = "\n".join(f"- {a['term']}: {a['question']}" for a in real_terms)
-    raw = _call_with_fallback(OPTIONS_PROMPT.format(text=text, terms_list=terms_list))
+    terms_list = "\n".join(f"- {a['term']}: {a['question']}" for a in real)
     try:
-        return _extract_json(raw)
+        return _extract_json(_call_with_fallback(OPTIONS_PROMPT.format(text=text, terms_list=terms_list)))
     except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse options response: {raw!r}")
         return {}
 
 
-def check_conflicts(new_text: str, existing_requirements: list[str]) -> list[dict]:
-    if not existing_requirements:
+def check_conflicts(new_text: str, existing: list[str]) -> list[dict]:
+    if not existing:
         return []
-    existing_list = "\n".join(f"- {r}" for r in existing_requirements)
-    raw = _call_with_fallback(CONFLICT_PROMPT.format(new_text=new_text, existing_list=existing_list))
+    existing_list = "\n".join(f"- {r}" for r in existing)
     try:
-        return _extract_json(raw)
+        return _extract_json(_call_with_fallback(CONFLICT_PROMPT.format(new_text=new_text, existing_list=existing_list)))
     except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse conflict-check response: {raw!r}")
         return []
-
-
-def check_redundancy(requirements: list[dict]) -> list[dict]:
-    if len(requirements) < 2:
-        return []
-    req_list = "\n".join(f"{r['requirement_id']}: {r['translated_text']}" for r in requirements)
-    raw = _call_with_fallback(REDUNDANCY_PROMPT.format(requirements_list=req_list))
-    try:
-        return _extract_json(raw)
-    except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse redundancy response: {raw!r}")
-        return []
-
-
-def generate_system_overview(project_name: str, discovery: list[dict], requirements: list[dict]) -> str:
-    if not requirements:
-        return "No requirements have been finalized yet for this session."
-    discovery_text = (
-        "\n".join(f"- {d['question']} -> {d['answer']}" for d in discovery if d.get("answer"))
-        if discovery else "(none provided)"
-    )
-    req_list = "\n".join(f"- {r['translated_text']}" for r in requirements)
-    raw = _call_with_fallback(
-        SYSTEM_OVERVIEW_PROMPT.format(project_name=project_name, discovery_context=discovery_text, requirements_list=req_list)
-    )
-    try:
-        result = _extract_json(raw)
-        return result.get("overview", "")
-    except (json.JSONDecodeError, ValueError):
-        print(f"[AIProvider] Could not parse system overview response: {raw!r}")
-        return ""
