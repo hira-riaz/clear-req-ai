@@ -558,6 +558,7 @@ exportDocBtn.addEventListener("click", async () => {
   if (!currentSessionId) return;
   try {
     const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report/docx`, { headers: { Authorization: `Bearer ${authToken}` } });
+    if (res.status === 401) { logout(); throw new Error("Session expired — please log in again."); }
     if (!res.ok) throw new Error("Export failed");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

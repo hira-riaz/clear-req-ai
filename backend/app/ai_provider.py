@@ -6,7 +6,7 @@ import json
 from google import genai
 from groq import Groq
 from dotenv import load_dotenv
-from . import rule_detector
+import app
 
 load_dotenv()
 
@@ -109,13 +109,13 @@ def translate(text: str, clarifications: list[dict], context: list[str] | None =
 
 def translate_and_verify(text: str, clarifications: list[dict], context=None, discovery=None) -> dict:
     result = translate(text, clarifications, context, discovery)
-    leftover = rule_detector.detect(result["translated_text"])
+    leftover = app.rule_detector.detect(result["translated_text"])
     if leftover:
         terms = ", ".join(f'"{i["term"]}"' for i in leftover)
         retry = clarifications + [{"term": "output review", "question": "avoid vague terms",
                                     "answer": f"Still vague: {terms}. Rewrite using the specifics already given — no placeholders."}]
         result = translate(text, retry, context, discovery)
-        if rule_detector.detect(result["translated_text"]):
+        if app.rule_detector.detect(result["translated_text"]):
             result["confidence"] = min(result.get("confidence", 1.0), 0.5)
     return result
 
