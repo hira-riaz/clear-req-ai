@@ -5,7 +5,7 @@ the backend folder so it never depends on the working directory.
 """
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
@@ -35,3 +35,17 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def migrate_legacy_user_auth():
+    """Replace legacy password credentials with a nullable Supabase identity link."""
+    columns = {column["name"] for column in inspect(engine).get_columns("users")}
+    with engine.begin() as connection:
+        if "supabase_user_id" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN supabase_user_id VARCHAR"))
+        if "password_hash" in columns:
+            connection.execute(text("ALTER TABLE users DROP COLUMN password_hash"))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_supabase_user_id "
+            "ON users (supabase_user_id)"
+        ))

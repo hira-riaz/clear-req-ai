@@ -1,10 +1,19 @@
+import {
+  getCurrentSession,
+  initializeSupabaseAuth,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  subscribeToAuthState,
+} from "./supabase-auth.js";
+
 // Configurable so a deployed build can point at a different backend than
 // localhost. Falls back to same-origin, which is correct when FastAPI
 // serves this frontend itself.
 const API_BASE = window.CLEARREQ_API_BASE || "";
 
-let authToken = localStorage.getItem("clearreq_token") || null;
 let currentUser = null;
+let currentSession = null;
 
 let currentSessionId = null;
 let currentRequirementId = null;
@@ -48,6 +57,7 @@ const renameBtn = document.getElementById("renameBtn");
 const startCard = document.getElementById("startCard");
 const discoveryCard = document.getElementById("discoveryCard");
 const discoveryStepper = document.getElementById("discoveryStepper");
+const sessionDetailCard = document.getElementById("sessionDetailCard");
 const mainCard = document.getElementById("mainCard");
 const reviewCard = document.getElementById("reviewCard");
 const reportCard = document.getElementById("reportCard");
@@ -73,17 +83,64 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-// ---------- fetch wrapper: attaches token, handles 401 globally ----------
+// ---------- modal engine: replaces confirm()/prompt() with in-app UI ----------
+const modalOverlay = document.getElementById("modalOverlay");
+const modalTitle = document.getElementById("modalTitle");
+const modalMessage = document.getElementById("modalMessage");
+const modalInput = document.getElementById("modalInput");
+const modalCancelBtn = document.getElementById("modalCancelBtn");
+const modalConfirmBtn = document.getElementById("modalConfirmBtn");
+
+function showModal({ title, message = "", withInput = false, inputValue = "", inputPlaceholder = "", danger = false, confirmLabel = "Confirm" }) {
+  return new Promise((resolve) => {
+    modalTitle.textContent = title;
+    modalMessage.textContent = message;
+    modalMessage.classList.toggle("hidden", !message);
+    modalInput.classList.toggle("hidden", !withInput);
+    modalInput.value = inputValue;
+    modalInput.placeholder = inputPlaceholder;
+    modalConfirmBtn.textContent = confirmLabel;
+    modalConfirmBtn.classList.toggle("modal-danger", danger);
+    modalOverlay.classList.remove("hidden");
+    if (withInput) setTimeout(() => modalInput.focus(), 0);
+
+    function cleanup(result) {
+      modalOverlay.classList.add("hidden");
+      modalConfirmBtn.removeEventListener("click", onConfirm);
+      modalCancelBtn.removeEventListener("click", onCancel);
+      modalInput.removeEventListener("keydown", onKey);
+      resolve(result);
+    }
+    function onConfirm() { cleanup(withInput ? (modalInput.value.trim() || null) : true); }
+    function onCancel() { cleanup(withInput ? null : false); }
+    function onKey(e) {
+      if (e.key === "Enter") onConfirm();
+      if (e.key === "Escape") onCancel();
+    }
+    modalConfirmBtn.addEventListener("click", onConfirm);
+    modalCancelBtn.addEventListener("click", onCancel);
+    modalInput.addEventListener("keydown", onKey);
+  });
+}
+
+function confirmModal(title, message, danger = false) {
+  return showModal({ title, message, danger, confirmLabel: danger ? "Delete" : "Confirm" });
+}
+function promptModal(title, { message = "", inputValue = "", inputPlaceholder = "" } = {}) {
+  return showModal({ title, message, withInput: true, inputValue, inputPlaceholder, confirmLabel: "Save" });
+}
+
+// ---------- fetch wrapper: attaches the current Supabase access token ----------
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+  const session = await getCurrentSession();
+  currentSession = session;
+  if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (res.status === 401) {
     const body = await res.json().catch(() => null);
-    const detail = body?.detail || "Request failed";
-    const isAuthEndpoint = path.startsWith("/auth/login") || path.startsWith("/auth/register");
-    if (!isAuthEndpoint) logout();
-    throw new Error(isAuthEndpoint ? detail : "Session expired — please log in again.");
+    await logout().catch((err) => console.error("Supabase sign-out failed:", err));
+    throw new Error(body?.detail || "Session expired — please sign in again.");
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -92,7 +149,8 @@ async function api(path, options = {}) {
   }
   return res.status === 204 ? null : res.json();
 }
-// ---------- auth ----------
+
+// ---------- Supabase Auth ----------
 loginTab.addEventListener("click", () => setAuthMode("login"));
 registerTab.addEventListener("click", () => setAuthMode("register"));
 
@@ -110,18 +168,29 @@ authSubmitBtn.addEventListener("click", async () => {
   const email = authEmail.value.trim();
   const password = authPassword.value;
   if (!email || !password) return;
+  if (authMode === "register" && !authName.value.trim()) {
+    authError.textContent = "Enter your name to create an account.";
+    authError.classList.remove("hidden");
+    return;
+  }
   authSubmitBtn.disabled = true;
   try {
-    const payload = authMode === "login"
-      ? { email, password }
-      : { name: authName.value.trim(), email, password };
-    const data = await api(authMode === "login" ? "/auth/login" : "/auth/register", {
-      method: "POST", body: JSON.stringify(payload),
-    });
-    authToken = data.token;
-    currentUser = data.user;
-    localStorage.setItem("clearreq_token", authToken);
-    await enterApp();
+    if (authMode === "login") {
+      const data = await signInWithPassword(email, password);
+      currentSession = data.session;
+      currentUser = data.user;
+      await enterApp();
+    } else {
+      const data = await signUpWithPassword(email, password, authName.value.trim());
+      if (!data.session) {
+        authError.textContent = "Check your email to confirm your account, then sign in.";
+        authError.classList.remove("hidden");
+      } else {
+        currentSession = data.session;
+        currentUser = data.user;
+        await enterApp();
+      }
+    }
   } catch (err) {
     authError.textContent = err.message;
     authError.classList.remove("hidden");
@@ -130,31 +199,49 @@ authSubmitBtn.addEventListener("click", async () => {
   }
 });
 
-function logout() {
-  authToken = null;
+function showSignedOutScreen() {
+  currentSession = null;
   currentUser = null;
-  localStorage.removeItem("clearreq_token");
   appShell.classList.add("hidden");
   authScreen.classList.remove("hidden");
   resetSessionState();
 }
-logoutBtn.addEventListener("click", logout);
+
+async function logout() {
+  showSignedOutScreen();
+  await signOut();
+}
+logoutBtn.addEventListener("click", async () => {
+  try {
+    await logout();
+  } catch (err) {
+    alert(err.message);
+  }
+});
 
 async function enterApp() {
+  if (!currentUser) return;
   authScreen.classList.add("hidden");
   appShell.classList.remove("hidden");
-  userNameLabel.textContent = currentUser.name;
+  userNameLabel.textContent = currentUser.user_metadata?.name || currentUser.email || "Account";
   await loadSidebar();
   showStartScreen();
 }
 
 (async function init() {
-  if (!authToken) return;
   try {
-    currentUser = await api("/auth/me");
-    await enterApp();
-  } catch {
-    logout();
+    await initializeSupabaseAuth();
+    subscribeToAuthState((event, session) => {
+      currentSession = session;
+      currentUser = session?.user || null;
+      if (event === "SIGNED_OUT") showSignedOutScreen();
+    });
+    currentSession = await getCurrentSession();
+    currentUser = currentSession?.user || null;
+    if (currentSession) await enterApp();
+  } catch (err) {
+    authError.textContent = err.message;
+    authError.classList.remove("hidden");
   }
 })();
 
@@ -178,21 +265,30 @@ function renderSidebar() {
     <div class="sidebar-item ${s.session_id === currentSessionId ? "active" : ""}" data-id="${s.session_id}">
       <span class="sidebar-item-name">${escapeHtml(s.project_name)}</span>
       <span class="sidebar-item-meta">${s.translated_count}/${s.requirement_count}</span>
+      ${s.requirement_count > 0 ? `<button class="sidebar-continue-btn" data-continue="${s.session_id}" title="Continue Session" aria-label="Continue ${escapeHtml(s.project_name)}">Continue</button>` : ""}
       <button class="sidebar-item-del" data-del="${s.session_id}" title="Delete">✕</button>
     </div>
   `).join("") || "<p class='report-empty'>No sessions yet.</p>";
 
   sidebarList.querySelectorAll(".sidebar-item").forEach((el) => {
     el.addEventListener("click", (e) => {
-      if (e.target.closest("[data-del]")) return;
+      if (e.target.closest("[data-del], [data-continue]")) return;
       openSession(parseInt(el.dataset.id, 10));
+    });
+  });
+  sidebarList.querySelectorAll("[data-continue]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      continueExistingSession(parseInt(btn.dataset.continue, 10));
     });
   });
   sidebarList.querySelectorAll("[data-del]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.stopPropagation();
       const id = parseInt(btn.dataset.del, 10);
-      if (!confirm("Delete this session and all its requirements? This cannot be undone.")) return;
+      const sessionName = sessions.find((s) => s.session_id === id)?.project_name || "this session";
+      const ok = await confirmModal("Delete session?", `"${sessionName}" and all its requirements will be permanently deleted.`, true);
+      if (!ok) return;
       try {
         await api(`/sessions/${id}`, { method: "DELETE" });
         sessions = sessions.filter((s) => s.session_id !== id);
@@ -211,22 +307,229 @@ async function openSession(sessionId) {
   renderSidebar();
   try {
     const data = await api(`/sessions/${sessionId}/report`);
+    if (currentSessionId !== sessionId) return; // a newer click superseded this one
     lastReportData = data;
-    projectLabel.textContent = data.project_name;
-    const total = data.requirements.length;
-    requirementCount = total;
-    reqCounterLabel.textContent = `Requirements added: ${total}`;
-    showCard(mainCard);
-    finishBtn.disabled = total === 0;
+    showSessionDetail(sessionId, data);
   } catch (err) {
     alert(err.message);
   }
 }
 
+function showSessionDetail(sessionId, data) {
+  const reqs = data.requirements;
+  const total = reqs.length;
+  const functional = reqs.filter((r) => r.req_type === "Functional").length;
+  const nonFunctional = reqs.filter((r) => r.req_type === "Non-Functional").length;
+  const approved = reqs.filter((r) => r.status === "approved").length;
+  const translated = reqs.filter((r) => r.status === "translated" || r.status === "approved").length;
+
+  const sessionMeta = sessions.find((s) => s.session_id === sessionId);
+
+  document.getElementById("detailProjectLabel").textContent = data.project_name;
+  document.getElementById("statsGrid").innerHTML = `
+    <div class="stat-box"><div class="stat-value">${total}</div><div class="stat-label">Requirements</div></div>
+    <div class="stat-box"><div class="stat-value">${approved}</div><div class="stat-label">Approved</div></div>
+    <div class="stat-box"><div class="stat-value">${functional}</div><div class="stat-label">Functional</div></div>
+    <div class="stat-box"><div class="stat-value">${nonFunctional}</div><div class="stat-label">Non-Functional</div></div>
+  `;
+  document.getElementById("detailDateLabel").textContent = sessionMeta
+    ? `Started ${new Date(sessionMeta.started_at).toLocaleString()} · ${translated}/${total} translated`
+    : "";
+  renderInteractiveAnalysis(data);
+
+  requirementCount = total;
+  reqCounterLabel.textContent = `Requirements added: ${total}`;
+  finishBtn.disabled = total === 0;
+
+  showCard(sessionDetailCard);
+}
+
+function renderInteractiveAnalysis(data, filter = { type: "all", value: "" }) {
+  const requirements = data.requirements || [];
+  const ambiguities = requirements.flatMap((requirement) => requirement.ambiguities || []);
+  const answeredCount = ambiguities.filter((ambiguity) => ambiguity.answer).length;
+  const confidenceScores = requirements
+    .map((requirement) => requirement.confidence_score)
+    .filter((score) => typeof score === "number" && Number.isFinite(score));
+  const averageConfidence = confidenceScores.length
+    ? `${Math.round(confidenceScores.reduce((sum, score) => sum + score, 0) / confidenceScores.length * 100)}%`
+    : "—";
+  const resolutionRate = ambiguities.length
+    ? `${Math.round(answeredCount / ambiguities.length * 100)}%`
+    : "—";
+
+  document.getElementById("analysisMetrics").innerHTML = `
+    <div class="stat-box"><div class="stat-value">${ambiguities.length}</div><div class="stat-label">Ambiguities detected</div></div>
+    <div class="stat-box"><div class="stat-value">${resolutionRate}</div><div class="stat-label">Ambiguities resolved</div></div>
+    <div class="stat-box"><div class="stat-value">${averageConfidence}</div><div class="stat-label">Average translation confidence</div></div>
+  `;
+
+  const statusCounts = new Map();
+  const categoryCounts = new Map();
+  requirements.forEach((requirement) => {
+    const status = requirement.status || "unknown";
+    statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+    (requirement.ambiguities || []).forEach((ambiguity) => {
+      const category = ambiguity.category || "uncategorized";
+      categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+    });
+  });
+
+  function renderBarChart(containerId, counts, filterType) {
+    const container = document.getElementById(containerId);
+    const entries = [...counts.entries()].sort((left, right) => right[1] - left[1]);
+    if (!entries.length) {
+      container.innerHTML = "<p class='analysis-muted'>No data available yet.</p>";
+      return;
+    }
+    const maxCount = Math.max(...entries.map(([, count]) => count));
+    container.innerHTML = entries.map(([label, count]) => {
+      const selected = filter.type === filterType && filter.value === label;
+      const width = Math.round(count / maxCount * 100);
+      return `
+        <button class="analysis-chart-row ${selected ? "selected" : ""}" data-analysis-filter="${filterType}" data-filter-value="${escapeHtml(label)}" aria-pressed="${selected}">
+          <span class="analysis-chart-label">${escapeHtml(label)}</span>
+          <span class="analysis-chart-track"><span class="analysis-chart-bar" style="width:${width}%"></span></span>
+          <span class="analysis-chart-count">${count}</span>
+        </button>
+      `;
+    }).join("");
+  }
+
+  renderBarChart("statusChart", statusCounts, "status");
+  renderBarChart("ambiguityChart", categoryCounts, "category");
+
+  document.getElementById("confidenceChart").innerHTML = requirements.length
+    ? requirements.map((requirement, index) => {
+        const confidence = requirement.confidence_score;
+        const available = typeof confidence === "number" && Number.isFinite(confidence);
+        const score = available ? Math.round(Math.max(0, Math.min(1, confidence)) * 100) : null;
+        return `
+          <button class="confidence-chart-row" data-open-requirement="${index}" ${available ? `aria-label="Open requirement ${index + 1}, confidence ${score} percent"` : `aria-label="Open requirement ${index + 1}, confidence unavailable"`}>
+            <span class="analysis-chart-label">Req. ${index + 1}</span>
+            <span class="analysis-chart-track"><span class="analysis-chart-bar confidence-bar" style="width:${score ?? 0}%"></span></span>
+            <span class="analysis-chart-count">${score === null ? "—" : `${score}%`}</span>
+          </button>
+        `;
+      }).join("")
+    : "<p class='analysis-muted'>Add requirements to see confidence scores.</p>";
+
+  const filteredRequirements = requirements
+    .map((requirement, index) => ({ requirement, index }))
+    .filter(({ requirement }) => {
+      if (filter.type === "status") return (requirement.status || "unknown") === filter.value;
+      if (filter.type === "category") return (requirement.ambiguities || []).some((ambiguity) => (ambiguity.category || "uncategorized") === filter.value);
+      return true;
+    });
+  const filterLabel = document.getElementById("analysisFilterLabel");
+  const clearFilterBtn = document.getElementById("clearAnalysisFilterBtn");
+  const isFiltered = filter.type !== "all";
+  filterLabel.textContent = isFiltered
+    ? `${filteredRequirements.length} requirement${filteredRequirements.length === 1 ? "" : "s"} matching ${filter.type}: ${filter.value}`
+    : `Showing all ${requirements.length} requirements`;
+  clearFilterBtn.classList.toggle("hidden", !isFiltered);
+  clearFilterBtn.onclick = () => renderInteractiveAnalysis(data);
+
+  document.querySelectorAll("#statusChart [data-analysis-filter], #ambiguityChart [data-analysis-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextFilter = filter.type === button.dataset.analysisFilter && filter.value === button.dataset.filterValue
+        ? { type: "all", value: "" }
+        : { type: button.dataset.analysisFilter, value: button.dataset.filterValue };
+      renderInteractiveAnalysis(data, nextFilter);
+    });
+  });
+
+  document.querySelectorAll("#confidenceChart [data-open-requirement]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.openRequirement);
+      const details = document.querySelector(`#analysisBreakdown details[data-requirement-index="${index}"]`);
+      if (!details) return;
+      details.open = true;
+      details.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
+
+  document.getElementById("analysisBreakdown").innerHTML = filteredRequirements.map(({ requirement, index }) => {
+    const requirementAmbiguities = requirement.ambiguities || [];
+    const confidence = typeof requirement.confidence_score === "number"
+      ? `${Math.round(requirement.confidence_score * 100)}%`
+      : "Not available";
+    const ambiguityDetails = requirementAmbiguities.length
+      ? `<ul class="analysis-ambiguities">${requirementAmbiguities.map((ambiguity) => `
+          <li>
+            <div class="analysis-ambiguity-heading">
+              <strong>${escapeHtml(ambiguity.term)}</strong>
+              <span>${escapeHtml(ambiguity.category || "Uncategorized")} · ${escapeHtml(ambiguity.detector || "unknown detector")}</span>
+            </div>
+            <p><strong>Detection confidence:</strong> ${typeof ambiguity.confidence === "number" ? `${Math.round(ambiguity.confidence * 100)}%` : "Not available"}</p>
+            <p><strong>Clarification:</strong> ${escapeHtml(ambiguity.question || "No clarification question recorded.")}</p>
+            <p><strong>Answer:</strong> ${escapeHtml(ambiguity.answer || "Unanswered")}</p>
+          </li>
+        `).join("")}</ul>`
+      : "<p class='analysis-muted'>No ambiguities were detected.</p>";
+
+    return `
+      <details class="analysis-item" data-requirement-index="${index}">
+        <summary>
+          <span class="analysis-item-title">Requirement ${index + 1}</span>
+          <span class="status-badge status-${escapeHtml(requirement.status)}">${escapeHtml(requirement.status)}</span>
+          <span class="analysis-preview">${escapeHtml(requirement.original_text)}</span>
+        </summary>
+        <div class="analysis-item-body">
+          <div class="analysis-result-grid">
+            <div><span class="analysis-field-label">Type</span><span>${escapeHtml(requirement.req_type || "Unclassified")}</span></div>
+            <div><span class="analysis-field-label">Category</span><span>${escapeHtml(requirement.category || "General")}</span></div>
+            <div><span class="analysis-field-label">Translation confidence</span><span>${confidence}</span></div>
+            <div><span class="analysis-field-label">Approved by</span><span>${escapeHtml(requirement.approved_by || "Not approved")}</span></div>
+          </div>
+          <h3>Past requirement</h3>
+          <p class="analysis-text">${escapeHtml(requirement.original_text)}</p>
+          <h3>Structured result</h3>
+          <p class="analysis-text">${escapeHtml(requirement.translated_text || "No translated requirement is available yet.")}</p>
+          <h3>Detected ambiguities (${requirementAmbiguities.length})</h3>
+          ${ambiguityDetails}
+        </div>
+      </details>
+    `;
+  }).join("") || "<p class='report-empty'>No requirements have been added to this session yet.</p>";
+
+}
+
+async function continueExistingSession(sessionId) {
+  await openSession(sessionId);
+  if (currentSessionId !== sessionId || !lastReportData) return;
+  continueSession(sessionId, lastReportData);
+}
+
+function continueSession(sessionId = currentSessionId, data = lastReportData) {
+  if (!sessionId) return;
+  const projectName = data?.project_name || sessions.find((s) => s.session_id === sessionId)?.project_name || "";
+  resetWizardOnly();
+  currentSessionId = sessionId;
+  projectLabel.textContent = projectName;
+  reqCounterLabel.textContent = `Requirements added: ${requirementCount}`;
+  finishBtn.disabled = requirementCount === 0;
+  showCard(mainCard);
+  requirementInput.focus();
+}
+
+document.getElementById("detailAddMoreBtn").addEventListener("click", () => continueSession());
+document.getElementById("detailReportBtn").addEventListener("click", async () => {
+  try {
+    let data = lastReportData;
+    if (!data) data = await api(`/sessions/${currentSessionId}/report`);
+    renderReportDoc(data);
+    showCard(reportCard);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+document.getElementById("detailRenameBtn").addEventListener("click", () => renameBtn.click());
+
 renameBtn.addEventListener("click", async () => {
   if (!currentSessionId) return;
-  const name = prompt("Rename project:", projectLabel.textContent);
-  if (!name || !name.trim()) return;
+  const name = await promptModal("Rename project", { inputValue: projectLabel.textContent });
+  if (!name) return;
   try {
     const data = await api(`/sessions/${currentSessionId}`, { method: "PATCH", body: JSON.stringify({ project_name: name.trim() }) });
     projectLabel.textContent = data.project_name;
@@ -237,7 +540,7 @@ renameBtn.addEventListener("click", async () => {
 });
 
 function showCard(card) {
-  [startCard, discoveryCard, mainCard, reviewCard, reportCard].forEach((c) => c.classList.add("hidden"));
+  [startCard, discoveryCard, sessionDetailCard, mainCard, reviewCard, reportCard].forEach((c) => c.classList.add("hidden"));
   card.classList.remove("hidden");
 }
 
@@ -468,9 +771,10 @@ async function loadReview() {
 }
 
 async function approveRequirement(id) {
-  const notes = prompt("Optional approval note:") || null;
+  const notes = await promptModal("Approve requirement", { inputPlaceholder: "Optional note (leave blank to skip)" });
   try {
     await api(`/requirements/${id}/approve`, { method: "POST", body: JSON.stringify({ notes }) });
+    lastReportData = null;
     await loadReview();
   } catch (err) {
     alert(err.message);
@@ -509,6 +813,7 @@ function startEdit(itemDiv) {
     if (!newText) return;
     try {
       await api(`/requirements/${itemDiv.dataset.id}/edit`, { method: "PATCH", body: JSON.stringify({ translated_text: newText }) });
+      lastReportData = null;
       await loadReview();
     } catch (err) {
       alert(err.message);
@@ -557,8 +862,15 @@ function renderReportDoc(data) {
 exportDocBtn.addEventListener("click", async () => {
   if (!currentSessionId) return;
   try {
-    const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report/docx`, { headers: { Authorization: `Bearer ${authToken}` } });
-    if (res.status === 401) { logout(); throw new Error("Session expired — please log in again."); }
+    const session = await getCurrentSession();
+    if (!session?.access_token) throw new Error("Please sign in again to export this report.");
+    const res = await fetch(`${API_BASE}/sessions/${currentSessionId}/report/docx`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (res.status === 401) {
+      await logout();
+      throw new Error("Session expired — please sign in again.");
+    }
     if (!res.ok) throw new Error("Export failed");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -572,4 +884,12 @@ exportDocBtn.addEventListener("click", async () => {
   }
 });
 
-backToSidebarBtn.addEventListener("click", () => { showStartScreen(); loadSidebar(); });
+backToSidebarBtn.addEventListener("click", async () => {
+  if (currentSessionId) {
+    await loadSidebar();
+    await openSession(currentSessionId);
+  } else {
+    showStartScreen();
+    loadSidebar();
+  }
+});

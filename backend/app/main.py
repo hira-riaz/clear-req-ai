@@ -18,14 +18,15 @@ from sqlalchemy import case, func
 from sqlalchemy.orm import Session as DBSession
 
 from . import ai_provider, models, rule_detector
-from .auth import create_token, get_current_user, hash_password, verify_password
-from .database import engine, get_db
+from .auth import get_current_user
+from .database import engine, get_db, migrate_legacy_user_auth
 from .schemas import (
-    ApproveIn, DiscoverySubmit, LoginIn, RegisterIn, RequirementEdit,
-    RequirementIn, SessionIn, TranslateRequest,
+    ApproveIn, DiscoverySubmit, RequirementEdit, RequirementIn, SessionIn,
+    TranslateRequest,
 )
 
 models.Base.metadata.create_all(bind=engine)
+migrate_legacy_user_auth()
 
 app = FastAPI(title="ClearReq AI")
 
@@ -108,10 +109,24 @@ def _requirement_view(db: DBSession, req: models.Requirement) -> dict:
         "original_text": req.original_text,
         "status": req.status,
         "translated_text": latest.translated_text if latest else None,
+        "confidence_score": latest.confidence_score if latest else None,
         "category": category,
         "req_type": _classify_fr_nfr(category),
         "clarified_at": max(times).isoformat() if times else None,
         "approved_by": approved_by,
+        "ambiguities": [
+            {
+                "term": ambiguity.term,
+                "category": ambiguity.category,
+                "detector": ambiguity.detector,
+                "confidence": ambiguity.confidence,
+                "question": ambiguity.clarification.question if ambiguity.clarification else None,
+                "answer": ambiguity.clarification.answer if ambiguity.clarification else None,
+                "answered_at": ambiguity.clarification.answered_at.isoformat()
+                if ambiguity.clarification and ambiguity.clarification.answered_at else None,
+            }
+            for ambiguity in ambiguities
+        ],
     }
 
 
@@ -156,39 +171,20 @@ def _delete_session_cascade(db: DBSession, session: models.Session, project: mod
     db.commit()
 
 
-# ---------- health + auth ----------
+# ---------- health + auth configuration ----------
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-def _user_out(u: models.User) -> dict:
-    return {"id": u.id, "name": u.name, "email": u.email}
-
-
-@app.post("/auth/register")
-def register(payload: RegisterIn, db: DBSession = Depends(get_db)):
-    if db.query(models.User).filter(models.User.email == payload.email).first():
-        raise HTTPException(409, "An account with this email already exists")
-    user = models.User(name=payload.name, email=payload.email, password_hash=hash_password(payload.password))
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return {"token": create_token(user.id), "user": _user_out(user)}
-
-
-@app.post("/auth/login")
-def login(payload: LoginIn, db: DBSession = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(401, "Incorrect email or password")
-    return {"token": create_token(user.id), "user": _user_out(user)}
-
-
-@app.get("/auth/me")
-def me(user: models.User = Depends(get_current_user)):
-    return _user_out(user)
+@app.get("/public-config")
+def public_config():
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    anon_key = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    if not supabase_url or not anon_key:
+        raise HTTPException(503, "Supabase authentication is not configured.")
+    return {"supabase_url": supabase_url, "supabase_anon_key": anon_key}
 
 
 # ---------- sessions (sidebar) ----------

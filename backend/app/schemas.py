@@ -8,7 +8,6 @@ import re
 from pydantic import BaseModel, field_validator
 
 _TAG_PATTERN = re.compile(r"<\s*/?\s*[a-zA-Z][^>]*>")
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _reject_html_like(value: str, field_name: str) -> str:
@@ -16,47 +15,6 @@ def _reject_html_like(value: str, field_name: str) -> str:
     if _TAG_PATTERN.search(value):
         raise ValueError(f"{field_name} appears to contain HTML/script content, which is not accepted as plain text")
     return value
-
-
-class RegisterIn(BaseModel):
-    name: str
-    email: str
-    password: str
-
-    @field_validator("name")
-    @classmethod
-    def v_name(cls, v: str) -> str:
-        v = v.strip()
-        if not v or len(v) > 80:
-            raise ValueError("Name must be 1-80 characters")
-        return _reject_html_like(v, "Name")
-
-    @field_validator("email")
-    @classmethod
-    def v_email(cls, v: str) -> str:
-        v = v.strip().lower()
-        if len(v) > 254 or not _EMAIL_PATTERN.match(v):
-            raise ValueError("Enter a valid email address")
-        return v
-
-    @field_validator("password")
-    @classmethod
-    def v_password(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        if len(v) > 128:
-            raise ValueError("Password must be at most 128 characters")
-        return v
-
-
-class LoginIn(BaseModel):
-    email: str
-    password: str
-
-    @field_validator("email")
-    @classmethod
-    def v_email(cls, v: str) -> str:
-        return v.strip().lower()
 
 
 class SessionIn(BaseModel):
