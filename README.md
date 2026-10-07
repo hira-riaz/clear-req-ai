@@ -12,7 +12,7 @@ See `docs/` for the architecture diagrams and the full planning document, and
 ```
 clearreq-ai/
 ├── backend/      FastAPI app, SQLite database, rule-based + AI detectors
-├── frontend/     Plain HTML/JS UI (fetches from the backend API)
+├── frontend/     React + Tailwind frontend
 ├── eval/         Labelled test set + precision/recall/F1 evaluation script
 ├── docs/         Architecture diagrams, ERD, planning documents
 └── context/      Project knowledge files (for Claude.ai Projects)
