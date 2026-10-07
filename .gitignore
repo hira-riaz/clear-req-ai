@@ -17,3 +17,8 @@ backend/app/clearreq.db
 backend/clearreq.db
 
 backend/check_models.py
+
+# React / Vite frontend
+frontend-react/node_modules/
+frontend-react/dist/
+frontend-react/.vite/

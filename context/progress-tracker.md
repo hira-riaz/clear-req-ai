@@ -27,7 +27,7 @@ Member B: evaluation, dataset, frontend.
 - **AI layer:** Google Gemini (`gemini-2.5-flash-lite`, primary) → Groq
   (`llama-3.3-70b-versatile`, fallback), both free-tier, no budget required
 - **Rule-based detection:** lexicon matching + spaCy POS-tagging
-- **Frontend:** plain HTML/CSS/JS, no build step, no framework
+- **Frontend:** React + Vite + Tailwind CSS in `frontend-react/`
 - **Report export:** python-docx
 - **Version control:** Git + GitHub
 
@@ -36,7 +36,7 @@ Member B: evaluation, dataset, frontend.
 ## 3. Architecture
 
 ```
-Frontend (plain HTML/JS)
+Frontend (React + Vite + Tailwind CSS)
       |
 FastAPI backend (backend/app/main.py)
       |
@@ -257,5 +257,6 @@ instead of them.
   `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` once
 - Run backend from inside `backend/` specifically:
   `uvicorn app.main:app --reload`
-- Frontend: `python -m http.server 5500` from inside `frontend/`, or open
-  `index.html` directly
+- Frontend development: `npm install` and `npm run dev` from
+  `frontend-react/`. Build with `npm run build` before serving the app from
+  FastAPI.

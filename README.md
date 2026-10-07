@@ -12,7 +12,7 @@ See `docs/` for the architecture diagrams and the full planning document, and
 ```
 clearreq-ai/
 ├── backend/      FastAPI app, SQLite database, rule-based + AI detectors
-├── frontend/     Plain HTML/JS UI (fetches from the backend API)
+├── frontend-react/ React + Vite + Tailwind frontend
 ├── eval/         Labelled test set + precision/recall/F1 evaluation script
 ├── docs/         Architecture diagrams, ERD, planning documents
 └── context/      Project knowledge files (for Claude.ai Projects)
@@ -35,29 +35,33 @@ automatically.
 
 ## Frontend setup
 
-No build step required. Because the frontend uses JavaScript modules, serve
-`frontend/index.html` over HTTP rather than opening it as a `file://` URL:
+The frontend uses React, Vite, and Tailwind CSS. It includes Supabase
+authentication, project sessions, discovery, requirement analysis and
+clarification, review, and report export. Run the backend in one terminal,
+then start Vite in another:
 
 ```
-cd frontend
-python -m http.server 5500
+cd frontend-react
+npm install
+npm run dev
 ```
 
-Then visit http://127.0.0.1:5500. The frontend expects the backend to be
-running at http://127.0.0.1:8000. When serving the frontend separately, set
-`window.CLEARREQ_API_BASE` before `app.js` loads, for example:
+Open the URL printed by Vite (usually http://localhost:5173). The Vite server
+proxies API routes to `http://127.0.0.1:8000`. To have FastAPI serve the
+frontend in production, build the React app first:
 
-```html
-<script>window.CLEARREQ_API_BASE = "http://127.0.0.1:8000";</script>
-<script type="module" src="app.js"></script>
+```
+cd frontend-react
+npm install
+npm run build
 ```
 
-For the local frontend server, add the configuration script to
-`frontend/index.html` before the module script, or use the same setting in your
-static host's runtime HTML configuration. No frontend `.env` file is used:
-plain browser JavaScript cannot read one without a build step. The frontend
-gets the public Supabase project URL and anon key from the backend's
-`/public-config` endpoint.
+FastAPI serves `frontend-react/dist/` when that build directory exists. Deploy
+the build output together with the backend. Use `npm run preview` to preview a
+production build locally.
+
+The frontend gets the public Supabase project URL and anon key from the
+backend's `/public-config` endpoint.
 
 ## Supabase Auth setup
 

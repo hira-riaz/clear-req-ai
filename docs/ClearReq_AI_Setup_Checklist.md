@@ -41,7 +41,7 @@ No paid extensions needed for this project.
    ```
    clearreq-ai/
    ├── backend/
-   ├── frontend/
+   ├── frontend-react/
    ├── eval/
    ├── docs/
    └── context/          <- your ai-workflow-rules.md etc go here
@@ -87,16 +87,15 @@ No paid extensions needed for this project.
 
 ---
 
-## 4. Node environment (frontend, only if using Vite + React)
+## 4. Node environment (React frontend)
 
 1. Check Node is installed: `node --version` (18+ recommended). If not, install from nodejs.org.
-2. Inside `frontend/`:
+2. Inside `frontend-react/`:
    ```
-   npm create vite@latest . -- --template react
    npm install
    npm run dev
    ```
-   If you'd rather skip the React/Vite setup entirely for a leaner MVP, plain HTML + JS with `fetch()` calls to your FastAPI backend works fine and has zero build step — reasonable given your hardware and timeline.
+   Build the frontend for FastAPI static serving with `npm run build`.
 
 ---
 
