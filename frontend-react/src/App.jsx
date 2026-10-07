@@ -970,6 +970,13 @@ function Workspace({ session, user, onSignOut }) {
               <p className="mt-2 text-sm text-slate-500">
                 Checking for ambiguity and preparing clarification questions...
               </p>
+              <button
+                className="mt-6 rounded-xl bg-brand px-5 py-3 text-sm font-semibold text-white opacity-60"
+                disabled
+                type="button"
+              >
+                Analyzing...
+              </button>
             </section>
           )}
 
