@@ -36,7 +36,7 @@ _origins = [o.strip() for o in os.getenv(
 ).split(",") if o.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"])
 
-DAILY_ANALYZE_LIMIT = int(os.getenv("DAILY_ANALYZE_LIMIT", "40"))
+DAILY_ANALYZE_LIMIT = int(os.getenv("DAILY_ANALYZE_LIMIT", "5000"))
 _usage: dict[int, tuple[str, int]] = {}  # in-memory; resets on restart (see DEPLOY.md)
 
 
