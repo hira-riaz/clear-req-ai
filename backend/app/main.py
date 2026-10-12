@@ -17,6 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session as DBSession
 
+from fastapi import Body
+
 from . import ai_provider, models, rule_detector
 from .auth import get_current_user
 from .database import engine, get_db, migrate_legacy_user_auth
@@ -321,7 +323,7 @@ def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get
     requirement, session, _ = _owned_requirement(db, payload.requirement_id, user)
 
     clarifications = []
-    for ans in payload.answers:
+    for ans in payload.answers: 
         clarification = (
             db.query(models.Clarification)
             .join(models.Ambiguity, models.Clarification.ambiguity_id == models.Ambiguity.id)
