@@ -10,7 +10,7 @@ Do these in order. Everything here is free.
 2. Extensions to install (Extensions panel, Ctrl+Shift+X):
    - **Python** (Microsoft) — backend development
    - **Pylance** — Python type checking / autocomplete
-   - **ESLint** — if using React frontend
+   - **ESLint** — optional JavaScript linting
    - **SQLite Viewer** — inspect your `.db` file without leaving the editor
    - **GitLens** — see who changed what line, useful with two people
    - **markdownlint** — keeps your context `.md` files and thesis docs clean
@@ -87,16 +87,11 @@ No paid extensions needed for this project.
 
 ---
 
-## 4. Node environment (frontend, only if using Vite + React)
+## 4. Frontend
 
-1. Check Node is installed: `node --version` (18+ recommended). If not, install from nodejs.org.
-2. Inside `frontend/`:
-   ```
-   npm create vite@latest . -- --template react
-   npm install
-   npm run dev
-   ```
-   If you'd rather skip the React/Vite setup entirely for a leaner MVP, plain HTML + JS with `fetch()` calls to your FastAPI backend works fine and has zero build step — reasonable given your hardware and timeline.
+The frontend uses plain HTML, CSS, and JavaScript and is served by FastAPI.
+No Node.js installation or frontend build step is required. Start the backend
+and open `http://127.0.0.1:8000`.
 
 ---
 

@@ -27,7 +27,7 @@ Member B: evaluation, dataset, frontend.
 - **AI layer:** Google Gemini (`gemini-2.5-flash-lite`, primary) → Groq
   (`llama-3.3-70b-versatile`, fallback), both free-tier, no budget required
 - **Rule-based detection:** lexicon matching + spaCy POS-tagging
-- **Frontend:** plain HTML/CSS/JS, no build step, no framework
+- **Frontend:** plain HTML, CSS, and JavaScript in `frontend/`
 - **Report export:** python-docx
 - **Version control:** Git + GitHub
 
@@ -36,7 +36,7 @@ Member B: evaluation, dataset, frontend.
 ## 3. Architecture
 
 ```
-Frontend (plain HTML/JS)
+Frontend (plain HTML, CSS, and JavaScript)
       |
 FastAPI backend (backend/app/main.py)
       |
@@ -128,7 +128,8 @@ not a bug.
 
 ## Known limitations (say these yourself in the defense)
 
-- No auth / single-user only — deliberate scope decision
+- Supabase Auth is required for protected endpoints; configure the project
+  URL and anon key in `backend/.env`.
 - Ambiguity detection is lexical-only (Option A scope) — underspecification
   (missing parameters, not vague wording) is explicitly out of scope
 - CORS is wide open (`allow_origins=["*"]`) — fine for local dev/demo,
@@ -257,5 +258,5 @@ instead of them.
   `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` once
 - Run backend from inside `backend/` specifically:
   `uvicorn app.main:app --reload`
-- Frontend: `python -m http.server 5500` from inside `frontend/`, or open
-  `index.html` directly
+- FastAPI serves the frontend from `frontend/`; no Node.js build step is
+  required.

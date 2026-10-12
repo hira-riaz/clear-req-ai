@@ -12,7 +12,7 @@ See `docs/` for the architecture diagrams and the full planning document, and
 ```
 clearreq-ai/
 ├── backend/      FastAPI app, SQLite database, rule-based + AI detectors
-├── frontend/     React + Tailwind frontend
+├── frontend/     Plain HTML, CSS, and JavaScript frontend
 ├── eval/         Labelled test set + precision/recall/F1 evaluation script
 ├── docs/         Architecture diagrams, ERD, planning documents
 └── context/      Project knowledge files (for Claude.ai Projects)
@@ -24,7 +24,7 @@ clearreq-ai/
 cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r ..\requirements.txt
 cp .env.example .env                # then fill in your API keys
 uvicorn app.main:app --reload
 ```
@@ -35,16 +35,46 @@ automatically.
 
 ## Frontend setup
 
-No build step required. Open `frontend/index.html` directly in a browser, or
-serve it locally:
+The frontend uses plain HTML, CSS, and JavaScript and requires no Node.js
+build step. FastAPI serves it from the `frontend/` directory. Start the backend
+as above, then open http://127.0.0.1:8000.
 
-```
-cd frontend
-python -m http.server 5500
-```
+The frontend loads the Supabase browser client from a CDN and gets the public
+Supabase project URL and anon key from the backend's `/public-config` endpoint.
 
-Then visit http://127.0.0.1:5500. The frontend expects the backend to be
-running at http://127.0.0.1:8000 (see `API_BASE` at the top of `app.js`).
+## Supabase Auth setup
+
+1. Create a Supabase project and enable the sign-in providers you want under
+   **Authentication → Providers**. Configure the site's URL and allowed
+   redirect URLs in **Authentication → URL Configuration**.
+2. Copy the project URL and its public **anon/publishable key** into
+   `backend/.env` (start from `backend/.env.example`):
+
+   ```dotenv
+   SUPABASE_URL=https://your-project-ref.supabase.co
+   SUPABASE_ANON_KEY=your-public-anon-key
+   ```
+
+   Set the same variables in the backend deployment environment. Never use
+   `service_role`/secret keys in this application.
+3. Install the backend requirements and start FastAPI as described above.
+   The frontend initializes `@supabase/supabase-js` from the Supabase ESM CDN;
+   the browser therefore needs network access to `esm.sh` and your Supabase
+   project.
+4. Users sign in or sign up through Supabase Auth. The SDK manages browser
+   session persistence and token refresh. Protected API requests send its
+   access token as a bearer token; the backend calls Supabase Auth's
+   `get_user(token)` before allowing access.
+5. On first sign-in, the backend creates a local ownership record keyed by
+   Supabase's immutable user ID. Existing local projects are linked only when
+   Supabase confirms the account's email and it matches an unlinked legacy
+   account.
+
+On startup, the backend migrates the existing `users` table by adding the
+Supabase subject column and dropping the old `password_hash` column. This
+intentionally removes local password hashes; back up the database first if you
+need a rollback. Existing project/session data remains and can be linked by
+the verified-email rule above.
 
 ## Running the evaluation
 
@@ -56,7 +86,7 @@ python evaluate.py
 This runs both detectors against `test_requirements.csv` and prints a
 precision / recall / F1 comparison table.
 
-## Environment variables (`backend/.env`)
+## Other backend environment variables (`backend/.env`)
 
 ```
 GEMINI_API_KEY=your_key_here
