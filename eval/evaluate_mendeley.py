@@ -1,209 +1,258 @@
+
 import os
 import sys
+import json
 import time
+import random
 import pandas as pd
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+BACKEND_DIR = os.path.join(PROJECT_ROOT, "backend")
+
+sys.path.insert(0, BACKEND_DIR)
+
+from app import ai_provider
+from app import rule_detector
+
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
+    fbeta_score,
     confusion_matrix,
 )
 
-# --------------------------------------------------
-# Allow imports from project root
-# --------------------------------------------------
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_ROOT)
-
-from backend.app import rule_detector
-from backend.app.ai_provider import detect_ambiguity
-
-
-# --------------------------------------------------
+# ============================================================
 # SETTINGS
-# --------------------------------------------------
+# ============================================================
 
-DATASET = os.path.join(
-    os.path.dirname(__file__),
-    "Cornelius_research_subsets.xlsx"
-)
+DATA_LIMIT = 25
 
+DATASET_PATH = "Cornelius_research_subsets.xlsx"
 SHEET_NAME = "Balanced_Classification"
 
-# Start small because AI detection makes API calls.
-SAMPLE_PER_CLASS = 5
+RANDOM_STATE = 42
+API_DELAY = 1
 
-RUN_AI = True
+AI_CACHE_FILE = "eval/mendeley_ai_cache.json"
+AI_CACHE_VERSION = "v1"
 
 
-# --------------------------------------------------
+# ============================================================
 # LOAD DATASET
-# --------------------------------------------------
+# ============================================================
 
-df = pd.read_excel(
-    DATASET,
-    sheet_name=SHEET_NAME
-)
+def load_dataset():
+    print("\nLoading dataset...")
 
-print(f"\nFull dataset: {len(df)} requirements")
-
-print("\nClass distribution:")
-print(df["HasAmbiguity"].value_counts())
-
-
-# --------------------------------------------------
-# CREATE BALANCED SAMPLE
-# --------------------------------------------------
-
-ambiguous = df[df["HasAmbiguity"] == True].sample(
-    n=SAMPLE_PER_CLASS,
-    random_state=42
-)
-
-non_ambiguous = df[df["HasAmbiguity"] == False].sample(
-    n=SAMPLE_PER_CLASS,
-    random_state=42
-)
-
-test_df = pd.concat(
-    [ambiguous, non_ambiguous]
-).sample(
-    frac=1,
-    random_state=42
-).reset_index(drop=True)
-
-print(
-    f"\nTesting {len(test_df)} requirements "
-    f"({SAMPLE_PER_CLASS} ambiguous + "
-    f"{SAMPLE_PER_CLASS} non-ambiguous)\n"
-)
-
-
-# --------------------------------------------------
-# STORAGE
-# --------------------------------------------------
-
-lexicon_predictions = []
-pos_predictions = []
-combined_predictions = []
-ai_predictions = []
-
-
-# --------------------------------------------------
-# RUN CLEARREQ DETECTORS
-# --------------------------------------------------
-
-for number, row in test_df.iterrows():
-
-    text = str(row["StoryText"])
-    expected = bool(row["HasAmbiguity"])
-
-    print("=" * 70)
-    print(f"Requirement {number + 1}/{len(test_df)}")
-    print(f"ID: {row['StoryID']}")
-    print(f"Expected: {expected}")
-    print(f"Text: {text[:150]}")
-
-    # -----------------------------
-    # 1. Lexicon detector
-    # -----------------------------
-
-    lexicon_result = rule_detector.detect_lexicon(text)
-    lexicon_prediction = len(lexicon_result) > 0
-
-    lexicon_predictions.append(lexicon_prediction)
-
-    print(
-        f"Lexicon  : {lexicon_prediction} "
-        f"{'✓' if lexicon_prediction == expected else '✗'}"
+    df = pd.read_excel(
+        DATASET_PATH,
+        sheet_name=SHEET_NAME
     )
 
-    # -----------------------------
-    # 2. POS detector
-    # -----------------------------
+    required_columns = [
+        "StoryID",
+        "StoryText",
+        "HasAmbiguity"
+    ]
 
-    pos_result = rule_detector.detect_pos(text)
-    pos_prediction = len(pos_result) > 0
-
-    pos_predictions.append(pos_prediction)
-
-    print(
-        f"POS      : {pos_prediction} "
-        f"{'✓' if pos_prediction == expected else '✗'}"
-    )
-
-    # -----------------------------
-    # 3. Combined rule detector
-    # -----------------------------
-
-    combined_result = rule_detector.detect(text)
-    combined_prediction = len(combined_result) > 0
-
-    combined_predictions.append(combined_prediction)
-
-    print(
-        f"Combined : {combined_prediction} "
-        f"{'✓' if combined_prediction == expected else '✗'}"
-    )
-
-    # -----------------------------
-    # 4. AI detector
-    # -----------------------------
-
-    if RUN_AI:
-
-        try:
-            ai_result = detect_ambiguity(text)
-
-            ai_prediction = len(ai_result) > 0
-
-        except Exception as e:
-
-            print(f"AI ERROR: {e}")
-
-            # Use None rather than False.
-            # API failure must NOT be counted
-            # as a wrong ambiguity prediction.
-            ai_prediction = None
-
-        ai_predictions.append(ai_prediction)
-
-        if ai_prediction is not None:
-
-            print(
-                f"AI       : {ai_prediction} "
-                f"{'✓' if ai_prediction == expected else '✗'}"
+    for col in required_columns:
+        if col not in df.columns:
+            raise ValueError(
+                f"Missing required column: {col}"
             )
 
-        else:
+    df = df[required_columns].copy()
 
-            print("AI       : ERROR")
+    # Convert labels to boolean
+    df["HasAmbiguity"] = (
+        df["HasAmbiguity"]
+        .astype(str)
+        .str.lower()
+        .map({
+            "true": True,
+            "1": True,
+            "yes": True,
+            "false": False,
+            "0": False,
+            "no": False,
+        })
+    )
 
-        # Small pause to reduce API pressure
-        time.sleep(1)
+    # Remove rows with invalid labels
+    df = df.dropna(
+        subset=["StoryText", "HasAmbiguity"]
+    )
+
+    return df
 
 
-# --------------------------------------------------
-# ADD RESULTS TO DATAFRAME
-# --------------------------------------------------
+# ============================================================
+# BALANCED RANDOM SAMPLE
+# ============================================================
 
-test_df["LexiconPrediction"] = lexicon_predictions
-test_df["POSPrediction"] = pos_predictions
-test_df["CombinedPrediction"] = combined_predictions
+def get_sample(df):
+    random.seed(RANDOM_STATE)
 
-if RUN_AI:
-    test_df["AIPrediction"] = ai_predictions
+    if DATA_LIMIT is None:
+        return df.sample(
+            frac=1,
+            random_state=RANDOM_STATE
+        ).reset_index(drop=True)
+
+    ambiguous = df[
+        df["HasAmbiguity"] == True
+    ]
+
+    clear = df[
+        df["HasAmbiguity"] == False
+    ]
+
+    target_ambiguous = DATA_LIMIT // 2
+    target_clear = DATA_LIMIT - target_ambiguous
+
+    # If enough records exist in both classes,
+    # create a balanced sample.
+    if (
+        len(ambiguous) >= target_ambiguous
+        and len(clear) >= target_clear
+    ):
+        ambiguous_sample = ambiguous.sample(
+            n=target_ambiguous,
+            random_state=RANDOM_STATE
+        )
+
+        clear_sample = clear.sample(
+            n=target_clear,
+            random_state=RANDOM_STATE
+        )
+
+        sample = pd.concat(
+            [
+                ambiguous_sample,
+                clear_sample
+            ]
+        )
+
+    else:
+        print(
+            "\nWarning: Not enough records for a balanced sample."
+        )
+
+        sample = df.sample(
+            n=min(DATA_LIMIT, len(df)),
+            random_state=RANDOM_STATE
+        )
+
+    return sample.sample(
+        frac=1,
+        random_state=RANDOM_STATE
+    ).reset_index(drop=True)
 
 
-# --------------------------------------------------
-# METRIC FUNCTION
-# --------------------------------------------------
+# ============================================================
+# AI CACHE
+# ============================================================
 
-def calculate_metrics(name, y_true, y_pred):
+def load_ai_cache():
+    if not os.path.exists(AI_CACHE_FILE):
+        return {}
 
-    accuracy = accuracy_score(y_true, y_pred)
+    try:
+        with open(
+            AI_CACHE_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            return json.load(f)
+
+    except Exception:
+        print(
+            "Warning: Could not read AI cache. Starting fresh."
+        )
+        return {}
+
+
+def save_ai_cache(cache):
+    os.makedirs(
+        os.path.dirname(AI_CACHE_FILE),
+        exist_ok=True
+    )
+
+    with open(
+        AI_CACHE_FILE,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(
+            cache,
+            f,
+            indent=2,
+            ensure_ascii=False
+        )
+
+
+# ============================================================
+# AI DETECTION
+# ============================================================
+
+def run_ai_detector(
+    story_id,
+    text,
+    cache
+):
+    cache_key = (
+        f"{AI_CACHE_VERSION}:{story_id}"
+    )
+
+    # Use cached result
+    if cache_key in cache:
+        return cache[cache_key]
+
+    print(
+        f"  AI call -> StoryID: {story_id}"
+    )
+
+    try:
+        result = ai_provider.detect_ambiguity(text)
+
+        # Save immediately
+        cache[cache_key] = result
+        save_ai_cache(cache)
+
+        time.sleep(API_DELAY)
+
+        return result
+
+    except Exception as e:
+        print(
+            f"  AI ERROR -> {story_id}: {e}"
+        )
+
+        return []
+
+
+# ============================================================
+# METRICS
+# ============================================================
+
+def calculate_metrics(
+    y_true,
+    y_pred
+):
+
+    tn, fp, fn, tp = confusion_matrix(
+        y_true,
+        y_pred,
+        labels=[0, 1]
+    ).ravel()
+
+    accuracy = accuracy_score(
+        y_true,
+        y_pred
+    )
 
     precision = precision_score(
         y_true,
@@ -223,147 +272,409 @@ def calculate_metrics(name, y_true, y_pred):
         zero_division=0
     )
 
-    tn, fp, fn, tp = confusion_matrix(
+    f2 = fbeta_score(
         y_true,
         y_pred,
-        labels=[False, True]
-    ).ravel()
-
-    print("\n" + "=" * 55)
-    print(name)
-    print("=" * 55)
-
-    print(f"Accuracy  : {accuracy:.2%}")
-    print(f"Precision : {precision:.2%}")
-    print(f"Recall    : {recall:.2%}")
-    print(f"F1 Score  : {f1:.2%}")
-
-    print("\nConfusion Matrix:")
-    print(f"TP: {tp}")
-    print(f"TN: {tn}")
-    print(f"FP: {fp}")
-    print(f"FN: {fn}")
+        beta=2,
+        zero_division=0
+    )
 
     return {
-        "Method": name,
-        "Accuracy": accuracy,
-        "Precision": precision,
-        "Recall": recall,
-        "F1": f1,
         "TP": tp,
         "TN": tn,
         "FP": fp,
         "FN": fn,
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Recall": recall,
+        "F1": f1,
+        "F2": f2,
     }
 
 
-# --------------------------------------------------
-# CALCULATE RESULTS
-# --------------------------------------------------
+# ============================================================
+# MAIN EVALUATION
+# ============================================================
 
-y_true = test_df["HasAmbiguity"].astype(bool)
+def main():
 
-summary = []
+    print("=" * 70)
+    print("ClearReq AI - Mendeley Evaluation")
+    print("=" * 70)
 
-summary.append(
-    calculate_metrics(
-        "Lexicon",
-        y_true,
-        test_df["LexiconPrediction"]
+    # --------------------------------------------------------
+    # Load
+    # --------------------------------------------------------
+
+    df = load_dataset()
+
+    print(
+        f"\nTotal dataset records: {len(df)}"
     )
-)
 
-summary.append(
-    calculate_metrics(
-        "POS",
-        y_true,
-        test_df["POSPrediction"]
+    # --------------------------------------------------------
+    # Sample
+    # --------------------------------------------------------
+
+    sample = get_sample(df)
+
+    print(
+        f"Records selected for evaluation: {len(sample)}"
     )
-)
 
-summary.append(
-    calculate_metrics(
-        "Combined Rules",
-        y_true,
-        test_df["CombinedPrediction"]
+    print(
+        "\nClass distribution:"
     )
-)
 
+    print(
+        sample["HasAmbiguity"]
+        .value_counts()
+        .rename({
+            True: "Ambiguous",
+            False: "Clear"
+        })
+    )
 
-# --------------------------------------------------
-# AI METRICS
-# --------------------------------------------------
+    # --------------------------------------------------------
+    # AI cache
+    # --------------------------------------------------------
 
-if RUN_AI:
+    ai_cache = load_ai_cache()
 
-    valid_ai = test_df[
-        test_df["AIPrediction"].notna()
-    ].copy()
+    print(
+        f"\nCached AI results: {len(ai_cache)}"
+    )
 
-    if len(valid_ai) > 0:
+    # --------------------------------------------------------
+    # Results
+    # --------------------------------------------------------
 
-        summary.append(
-            calculate_metrics(
-                "AI / LLM",
-                valid_ai["HasAmbiguity"].astype(bool),
-                valid_ai["AIPrediction"].astype(bool)
-            )
+    results = []
+
+    print("\n" + "=" * 70)
+    print("Running evaluation...")
+    print("=" * 70)
+
+    for index, row in sample.iterrows():
+
+        story_id = str(row["StoryID"])
+        text = str(row["StoryText"])
+
+        actual = bool(
+            row["HasAmbiguity"]
         )
 
         print(
-            f"\nAI successfully evaluated "
-            f"{len(valid_ai)}/{len(test_df)} requirements."
+            f"\n[{index + 1}/{len(sample)}] "
+            f"StoryID: {story_id}"
         )
 
+        print(
+            f"Actual: "
+            f"{'Ambiguous' if actual else 'Clear'}"
+        )
 
-# --------------------------------------------------
-# FINAL COMPARISON TABLE
-# --------------------------------------------------
+        # ====================================================
+        # LEXICON
+        # ====================================================
 
-summary_df = pd.DataFrame(summary)
+        lexicon_result = (
+            rule_detector.detect_lexicon(text)
+        )
 
-print("\n\n")
-print("=" * 70)
-print("CLEARREQ AI — FINAL COMPARISON")
-print("=" * 70)
+        lexicon_prediction = (
+            len(lexicon_result) > 0
+        )
 
-print(
-    summary_df[
-        [
-            "Method",
-            "Accuracy",
-            "Precision",
-            "Recall",
-            "F1"
-        ]
-    ].to_string(index=False)
-)
+        # ====================================================
+        # POS
+        # ====================================================
 
+        pos_result = (
+            rule_detector.detect_pos(text)
+        )
 
-# --------------------------------------------------
-# SAVE FILES
-# --------------------------------------------------
+        pos_prediction = (
+            len(pos_result) > 0
+        )
 
-results_path = os.path.join(
-    os.path.dirname(__file__),
-    "clearreq_mendeley_results.csv"
-)
+        # ====================================================
+        # COMBINED
+        # ====================================================
 
-summary_path = os.path.join(
-    os.path.dirname(__file__),
-    "clearreq_mendeley_summary.csv"
-)
+        combined_result = (
+            rule_detector.detect(text)
+        )
 
-test_df.to_csv(
-    results_path,
-    index=False
-)
+        combined_prediction = (
+            len(combined_result) > 0
+        )
 
-summary_df.to_csv(
-    summary_path,
-    index=False
-)
+        # ====================================================
+        # AI
+        # ====================================================
 
-print("\nSaved:")
-print(results_path)
-print(summary_path)
+        ai_result = run_ai_detector(
+            story_id,
+            text,
+            ai_cache
+        )
+
+        ai_prediction = (
+            len(ai_result) > 0
+        )
+
+        # ====================================================
+        # SAVE RECORD
+        # ====================================================
+
+        results.append({
+            "StoryID": story_id,
+            "StoryText": text,
+            "Actual": int(actual),
+
+            "LexiconPrediction":
+                int(lexicon_prediction),
+
+            "POSPrediction":
+                int(pos_prediction),
+
+            "CombinedPrediction":
+                int(combined_prediction),
+
+            "AIPrediction":
+                int(ai_prediction),
+
+            "LexiconTerms":
+                json.dumps(
+                    lexicon_result,
+                    ensure_ascii=False
+                ),
+
+            "POSTerms":
+                json.dumps(
+                    pos_result,
+                    ensure_ascii=False
+                ),
+
+            "CombinedTerms":
+                json.dumps(
+                    combined_result,
+                    ensure_ascii=False
+                ),
+
+            "AITerms":
+                json.dumps(
+                    ai_result,
+                    ensure_ascii=False
+                ),
+        })
+
+        print(
+            f"  Lexicon : "
+            f"{'Ambiguous' if lexicon_prediction else 'Clear'}"
+        )
+
+        print(
+            f"  POS     : "
+            f"{'Ambiguous' if pos_prediction else 'Clear'}"
+        )
+
+        print(
+            f"  Combined: "
+            f"{'Ambiguous' if combined_prediction else 'Clear'}"
+        )
+
+        print(
+            f"  AI      : "
+            f"{'Ambiguous' if ai_prediction else 'Clear'}"
+        )
+
+    # ========================================================
+    # DATAFRAME
+    # ========================================================
+
+    detailed_df = pd.DataFrame(
+        results
+    )
+
+    # ========================================================
+    # EVALUATE METHODS
+    # ========================================================
+
+    methods = {
+        "Lexicon":
+            "LexiconPrediction",
+
+        "POS":
+            "POSPrediction",
+
+        "Combined Rules":
+            "CombinedPrediction",
+
+        "AI":
+            "AIPrediction",
+    }
+
+    summary = []
+
+    y_true = detailed_df[
+        "Actual"
+    ].astype(int).tolist()
+
+    for method, prediction_column in methods.items():
+
+        y_pred = detailed_df[
+            prediction_column
+        ].astype(int).tolist()
+
+        metrics = calculate_metrics(
+            y_true,
+            y_pred
+        )
+
+        summary.append({
+            "Method": method,
+            "TestedRecords":
+                len(detailed_df),
+
+            **metrics
+        })
+
+    summary_df = pd.DataFrame(
+        summary
+    )
+
+    # ========================================================
+    # ERROR ANALYSIS
+    # ========================================================
+
+    error_rows = []
+
+    for _, row in detailed_df.iterrows():
+
+        actual = row["Actual"]
+
+        for method, prediction_column in methods.items():
+
+            prediction = row[
+                prediction_column
+            ]
+
+            if (
+                actual == 0
+                and prediction == 1
+            ):
+                error_type = "False Positive"
+
+            elif (
+                actual == 1
+                and prediction == 0
+            ):
+                error_type = "False Negative"
+
+            else:
+                continue
+
+            error_rows.append({
+                "StoryID":
+                    row["StoryID"],
+
+                "StoryText":
+                    row["StoryText"],
+
+                "Actual":
+                    actual,
+
+                "Method":
+                    method,
+
+                "Prediction":
+                    prediction,
+
+                "ErrorType":
+                    error_type,
+            })
+
+    error_df = pd.DataFrame(
+        error_rows
+    )
+
+    # ========================================================
+    # SAVE FILES
+    # ========================================================
+
+    os.makedirs(
+        "eval",
+        exist_ok=True
+    )
+
+    detailed_file = (
+        "eval/"
+        "clearreq_mendeley_detailed_results.csv"
+    )
+
+    summary_file = (
+        "eval/"
+        "clearreq_mendeley_comparison.csv"
+    )
+
+    error_file = (
+        "eval/"
+        "clearreq_mendeley_error_analysis.csv"
+    )
+
+    detailed_df.to_csv(
+        detailed_file,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    summary_df.to_csv(
+        summary_file,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    error_df.to_csv(
+        error_file,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    # ========================================================
+    # PRINT FINAL TABLE
+    # ========================================================
+
+    print("\n")
+    print("=" * 70)
+    print("FINAL RESULTS")
+    print("=" * 70)
+
+    display_df = summary_df.copy()
+
+    for column in [
+        "Accuracy",
+        "Precision",
+        "Recall",
+        "F1",
+        "F2"
+    ]:
+        display_df[column] = (
+            display_df[column] * 100
+        ).round(2).astype(str) + "%"
+
+    print(
+        display_df.to_string(
+            index=False
+        )
+    )
+
+    
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    main()

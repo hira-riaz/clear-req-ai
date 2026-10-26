@@ -1,0 +1,46 @@
+﻿StoryID,StoryText,Actual,Method,Prediction,ErrorType
+US-C2-2535,"As a medical staff, I would like to access records to improve patient care",1,Lexicon,0,False Negative
+US-C3-5362,"As a vendor, I want to leave review so that I can save money",0,AI,1,False Positive
+US-C2-3881,"As a healthcare provider, I need to access records so that I can reduce errors",1,Lexicon,0,False Negative
+US-C2-3881,"As a healthcare provider, I need to access records so that I can reduce errors",1,POS,0,False Negative
+US-C2-3881,"As a healthcare provider, I need to access records so that I can reduce errors",1,Combined Rules,0,False Negative
+US-C4-7799,"As a network admin, I want to check data usage so that I can resolve issues",0,AI,1,False Positive
+US-C7-11636,"As a user, I would like to process payments to complete purchase",1,Lexicon,0,False Negative
+US-C7-11636,"As a user, I would like to process payments to complete purchase",1,POS,0,False Negative
+US-C7-11636,"As a user, I would like to process payments to complete purchase",1,Combined Rules,0,False Negative
+US-C4-8715,"As a service representative, I want to manage service so that I can avoid overage charges",1,Lexicon,0,False Negative
+US-C4-8715,"As a service representative, I want to manage service so that I can avoid overage charges",1,POS,0,False Negative
+US-C4-8715,"As a service representative, I want to manage service so that I can avoid overage charges",1,Combined Rules,0,False Negative
+US-C1-1245,"As a loan officer, I want to transfer funds so that I can track spending",0,AI,1,False Positive
+US-C6-10635,"As a nurse, I would like to handle patient care to improve patient care",1,Lexicon,0,False Negative
+US-C3-4380,"As a shopper, I want to track order in order to find desired items",0,AI,1,False Positive
+US-C4-7598,"As a user, I need to manage service so that I can maintain connectivity",1,Lexicon,0,False Negative
+US-C4-7598,"As a user, I need to manage service so that I can maintain connectivity",1,POS,0,False Negative
+US-C4-7598,"As a user, I need to manage service so that I can maintain connectivity",1,Combined Rules,0,False Negative
+US-C1-1788,"As a bank customer, I want to handle finances so that I can improve security with detailed specifications and comprehensive requirements",1,Lexicon,0,False Negative
+US-C1-798,"As a bank customer, I need to transfer funds so that I can save time",0,AI,1,False Positive
+US-C3-6786,"As a vendor, I would like to checkout to find desired items",0,AI,1,False Positive
+US-C2-3919,"As a patient, I want to access records so that I can ensure compliance",1,Lexicon,0,False Negative
+US-C2-3919,"As a patient, I want to access records so that I can ensure compliance",1,POS,0,False Negative
+US-C2-3919,"As a patient, I want to access records so that I can ensure compliance",1,Combined Rules,0,False Negative
+US-C7-12275,"As a store owner, I need to checkout so that I have better complete purchase",1,Lexicon,0,False Negative
+US-C4-8042,"As a service representative, I would like to pay bill to avoid overage charges with detailed specifications and comprehensive requirements",0,POS,1,False Positive
+US-C4-8042,"As a service representative, I would like to pay bill to avoid overage charges with detailed specifications and comprehensive requirements",0,Combined Rules,1,False Positive
+US-C4-8042,"As a service representative, I would like to pay bill to avoid overage charges with detailed specifications and comprehensive requirements",0,AI,1,False Positive
+US-C1-675,"As a investor, I want to apply for loan so that I can meet financial goals",0,POS,1,False Positive
+US-C1-675,"As a investor, I want to apply for loan so that I can meet financial goals",0,Combined Rules,1,False Positive
+US-C1-675,"As a investor, I want to apply for loan so that I can meet financial goals",0,AI,1,False Positive
+US-C3-6933,"As a buyer, I want to leave review in order to complete purchase with detailed specifications and comprehensive requirements",0,POS,1,False Positive
+US-C3-6933,"As a buyer, I want to leave review in order to complete purchase with detailed specifications and comprehensive requirements",0,Combined Rules,1,False Positive
+US-C3-6933,"As a buyer, I want to leave review in order to complete purchase with detailed specifications and comprehensive requirements",0,AI,1,False Positive
+US-C3-4453,"As a seller, I need to checkout so that I can save money",0,AI,1,False Positive
+US-C3-6633,"As a store owner, I want to track order so that I can make informed decisions with detailed specifications and comprehensive requirements",0,POS,1,False Positive
+US-C3-6633,"As a store owner, I want to track order so that I can make informed decisions with detailed specifications and comprehensive requirements",0,Combined Rules,1,False Positive
+US-C3-6633,"As a store owner, I want to track order so that I can make informed decisions with detailed specifications and comprehensive requirements",0,AI,1,False Positive
+US-C7-11857,"As a customer, I would like to handle orders to make informed decisions",1,Lexicon,0,False Negative
+US-C2-3132,"As a user, I need to generate lab report so that I can enhance safety",1,POS,0,False Negative
+US-C3-5292,"As a store owner, I need to leave review so that I can save money with detailed specifications and comprehensive requirements",0,POS,1,False Positive
+US-C3-5292,"As a store owner, I need to leave review so that I can save money with detailed specifications and comprehensive requirements",0,Combined Rules,1,False Positive
+US-C3-5292,"As a store owner, I need to leave review so that I can save money with detailed specifications and comprehensive requirements",0,AI,1,False Positive
+US-C4-7181,"As a service representative, I would like to upgrade plan to avoid overage charges",0,AI,1,False Positive
+US-C2-3854,"As a healthcare provider, I need to process medical information so that I can ensure compliance",1,Lexicon,0,False Negative
