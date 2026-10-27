@@ -677,6 +677,36 @@ button.nav-item:hover:not(:disabled) {
   padding: 8px;
   text-align: left;
 }
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-row .session-item {
+  min-width: 0;
+  flex: 1;
+}
+
+.session-delete {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.session-delete:hover {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 
 .session-item:hover {
   background: var(--tint);

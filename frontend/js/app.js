@@ -322,23 +322,58 @@
 
   function sessionListHtml() {
     const query = state.search.trim().toLowerCase();
+  
     const list = state.sessions.filter(function (s) {
       return s.project_name.toLowerCase().indexOf(query) >= 0;
     });
-    if (state.loadingSessions) return '<p class="session-note">Loading sessions...</p>';
-    if (!list.length) {
-      return '<p class="session-note">' + (state.search ? "No sessions match your search." : "Your new projects will show up here.") + "</p>";
+  
+    if (state.loadingSessions) {
+      return '<p class="session-note">Loading sessions...</p>';
     }
+  
+    if (!list.length) {
+      return '<p class="session-note">' +
+        (state.search
+          ? "No sessions match your search."
+          : "Your new projects will show up here.") +
+        "</p>";
+    }
+  
     return list
       .map(function (s) {
         const selected = s.session_id === state.selectedId;
+  
         return (
-          '<button type="button" class="session-item' + (selected ? " selected" : "") + '"' +
+          '<div class="session-row">' +
+  
+          '<button type="button" class="session-item' +
+          (selected ? " selected" : "") + '"' +
           (selected ? ' aria-current="true"' : "") +
-          ' data-action="openSession" data-id="' + s.session_id + '">' +
+          ' data-action="openSession" data-id="' +
+          s.session_id +
+          '">' +
+  
           '<span class="name">' + esc(s.project_name) + "</span>" +
-          '<span class="meta">' + plural(s.requirement_count, "requirement") +
-          (s.translated_count ? ", " + s.translated_count + " translated" : "") + "</span></button>"
+  
+          '<span class="meta">' +
+          plural(s.requirement_count, "requirement") +
+          (s.translated_count
+            ? ", " + s.translated_count + " translated"
+            : "") +
+          "</span>" +
+  
+          "</button>" +
+  
+          '<button class="session-delete" type="button" ' +
+          'data-action="deleteSession" ' +
+          'data-id="' + s.session_id + '" ' +
+          'data-name="' + esc(s.project_name) + '" ' +
+          'title="Delete session" aria-label="Delete ' +
+          esc(s.project_name) + '">' +
+          "×" +
+          "</button>" +
+  
+          "</div>"
         );
       })
       .join("");
@@ -430,17 +465,34 @@
   function discoveryHtml() {
     const q = discoveryQuestions[state.discoveryIndex];
     const pct = ((state.discoveryIndex + 1) / discoveryQuestions.length) * 100;
+  
     return (
       '<section class="glass card"><div class="progress"><div style="width:' + pct + '%"></div></div>' +
       '<p class="muted" style="margin-top:16px">Question ' + (state.discoveryIndex + 1) + " of " + discoveryQuestions.length + "</p>" +
       '<h2 class="display q-title">' + esc(q.question) + "</h2>" +
+  
       '<div class="option-grid">' +
       q.options
         .map(function (o, i) {
-          return '<button class="option" type="button" data-action="discoveryAnswer" data-index="' + i + '"' + (state.busy ? " disabled" : "") + ">" + esc(o) + "</button>";
+          return '<button class="option" type="button" data-action="discoveryAnswer" data-index="' + i + '"' +
+            (state.busy ? " disabled" : "") + ">" + esc(o) + "</button>";
         })
         .join("") +
-      '</div><div style="margin-top:24px"><button class="link-btn" type="button" data-action="discoverySkip"' + (state.busy ? " disabled" : "") + ">Skip this question</button></div></section>"
+      "</div>" +
+  
+      '<div class="row-between" style="margin-top:24px">' +
+  
+      (state.discoveryIndex > 0
+        ? '<button class="btn btn-ghost" type="button" data-action="discoveryPrevious"' +
+          (state.busy ? " disabled" : "") +
+          '>← Previous</button>'
+        : '<span></span>') +
+  
+      '<button class="link-btn" type="button" data-action="discoverySkip"' +
+      (state.busy ? " disabled" : "") +
+      ">Skip this question</button>" +
+  
+      "</div></section>"
     );
   }
 
@@ -710,6 +762,48 @@
       go(state.workflow);
     }
   }
+async function deleteSession(id, name) {
+  if (!id || state.busy) return;
+
+  const confirmed = window.confirm(
+    'Delete "' + name + '"?\n\nThis session will be permanently deleted.'
+  );
+
+  if (!confirmed) return;
+
+  state.busy = true;
+  clearMessages();
+
+  try {
+    await api("/sessions/" + id, {
+      method: "DELETE"
+    });
+
+    state.sessions = state.sessions.filter(function (s) {
+      return s.session_id !== id;
+    });
+
+    if (state.selectedId === id) {
+      state.selectedId = state.sessions.length
+        ? state.sessions[0].session_id
+        : null;
+
+      state.workflow = "dashboard";
+      state.report = null;
+      state.requirementText = "";
+      state.requirementId = null;
+      state.ambiguities = [];
+      state.answers = {};
+    }
+
+    state.notice = "Session deleted successfully.";
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.busy = false;
+    render();
+  }
+}
 
   async function analyzeRequirement() {
     const text = state.requirementText.trim();
@@ -964,6 +1058,11 @@
       state.authNotice = null;
       render();
     },
+    
+    deleteSession: function (data) {
+      deleteSession(Number(data.id), data.name);
+    },
+
     newSession: function () {
       clearMessages();
       state.focusId = "project-name";
@@ -993,7 +1092,20 @@
     discoveryAnswer: function (data) {
       saveDiscoveryAnswer(discoveryQuestions[state.discoveryIndex].options[Number(data.index)]);
     },
-    discoverySkip: function () { saveDiscoveryAnswer(null); },
+    
+    discoveryPrevious: function () {
+      if (state.busy || state.discoveryIndex <= 0) return;
+    
+      state.discoveryIndex -= 1;
+      state.discoveryAnswers = state.discoveryAnswers.slice(
+        0,
+        state.discoveryIndex
+      );
+    
+      clearMessages();
+      render();
+    },
+    
     finish: function () { showReport(); },
     answerOption: function (data) {
       advanceClarification(state.ambiguities[state.qIndex].options[Number(data.index)]);
