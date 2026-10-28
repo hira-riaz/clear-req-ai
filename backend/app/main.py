@@ -62,6 +62,11 @@ def _owned_session(db: DBSession, session_id: int, user: models.User):
     return session, project
 
 
+def _ensure_session_active(session: models.Session) -> None:
+    if session.ended_at is not None:
+        raise HTTPException(409, "This session is completed and read-only.")
+
+
 def _owned_requirement(db: DBSession, requirement_id: int, user: models.User):
     req = db.get(models.Requirement, requirement_id)
     if not req:
@@ -201,7 +206,13 @@ def start_session(payload: SessionIn, db: DBSession = Depends(get_db), user: mod
     db.add(session)
     db.commit()
     db.refresh(session)
-    return {"session_id": session.id, "project_id": project.id, "project_name": project.name}
+    return {
+        "session_id": session.id,
+        "project_id": project.id,
+        "project_name": project.name,
+        "client_name": project.client_name,
+        "started_at": session.started_at.isoformat(),
+    }
 
 
 @app.get("/sessions")
@@ -213,24 +224,34 @@ def list_sessions(db: DBSession = Depends(get_db), user: models.User = Depends(g
         .order_by(models.Session.started_at.desc())
         .all()
     )
-    stats: dict[int, tuple[int, int]] = {}
+    stats: dict[int, tuple[int, int, int]] = {}
     ids = [s.id for s, _ in rows]
     if ids:
         done = case((models.Requirement.status.in_(["translated", "approved"]), 1), else_=0)
-        for sid, total, finished in (
-            db.query(models.Requirement.session_id, func.count(models.Requirement.id), func.sum(done))
+        approved = case((models.Requirement.status == "approved", 1), else_=0)
+        for sid, total, finished, approved_total in (
+            db.query(
+                models.Requirement.session_id,
+                func.count(models.Requirement.id),
+                func.sum(done),
+                func.sum(approved),
+            )
             .filter(models.Requirement.session_id.in_(ids))
             .group_by(models.Requirement.session_id)
             .all()
         ):
-            stats[sid] = (int(total), int(finished or 0))
+            stats[sid] = (int(total), int(finished or 0), int(approved_total or 0))
     return [
         {
             "session_id": s.id,
             "project_name": p.name,
+            "client_name": p.client_name,
             "started_at": s.started_at.isoformat(),
-            "requirement_count": stats.get(s.id, (0, 0))[0],
-            "translated_count": stats.get(s.id, (0, 0))[1],
+            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+            "status": "completed" if s.ended_at else "active",
+            "requirement_count": stats.get(s.id, (0, 0, 0))[0],
+            "translated_count": stats.get(s.id, (0, 0, 0))[1],
+            "approved_count": stats.get(s.id, (0, 0, 0))[2],
         }
         for s, p in rows
     ]
@@ -238,7 +259,8 @@ def list_sessions(db: DBSession = Depends(get_db), user: models.User = Depends(g
 
 @app.patch("/sessions/{session_id}")
 def rename_session(session_id: int, payload: SessionIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _, project = _owned_session(db, session_id, user)
+    session, project = _owned_session(db, session_id, user)
+    _ensure_session_active(session)
     project.name = payload.project_name
     db.commit()
     return {"session_id": session_id, "project_name": project.name}
@@ -247,13 +269,29 @@ def rename_session(session_id: int, payload: SessionIn, db: DBSession = Depends(
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
     session, project = _owned_session(db, session_id, user)
+    _ensure_session_active(session)
     _delete_session_cascade(db, session, project)
     return {"status": "deleted"}
 
 
+@app.post("/sessions/{session_id}/complete")
+def complete_session(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    session, _ = _owned_session(db, session_id, user)
+    if session.ended_at is None:
+        session.ended_at = datetime.utcnow()
+        db.commit()
+        db.refresh(session)
+    return {
+        "session_id": session.id,
+        "status": "completed",
+        "ended_at": session.ended_at.isoformat(),
+    }
+
+
 @app.post("/sessions/{session_id}/discovery")
 def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _owned_session(db, session_id, user)
+    session, _ = _owned_session(db, session_id, user)
+    _ensure_session_active(session)
     for item in payload.answers:
         db.add(models.DiscoveryAnswer(session_id=session_id, question=item.question, answer=item.answer))
     db.commit()
@@ -264,7 +302,8 @@ def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = 
 
 @app.post("/requirements/analyze")
 def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _owned_session(db, payload.session_id, user)
+    session, _ = _owned_session(db, payload.session_id, user)
+    _ensure_session_active(session)
     _check_rate_limit(user)
 
     requirement = models.Requirement(session_id=payload.session_id, original_text=payload.text, status="clarifying")
@@ -321,6 +360,7 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db),
 @app.post("/requirements/translate")
 def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
     requirement, session, _ = _owned_requirement(db, payload.requirement_id, user)
+    _ensure_session_active(session)
 
     clarifications = []
     for ans in payload.answers:
@@ -367,7 +407,8 @@ def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get
 
 @app.patch("/requirements/{requirement_id}/edit")
 def edit_requirement_translation(requirement_id: int, payload: RequirementEdit, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    requirement, _, _ = _owned_requirement(db, requirement_id, user)
+    requirement, session, _ = _owned_requirement(db, requirement_id, user)
+    _ensure_session_active(session)
     count = db.query(models.RequirementVersion).filter(models.RequirementVersion.requirement_id == requirement.id).count()
     version = models.RequirementVersion(
         requirement_id=requirement.id, version_number=count + 1,
@@ -382,7 +423,8 @@ def edit_requirement_translation(requirement_id: int, payload: RequirementEdit, 
 
 @app.post("/requirements/{requirement_id}/approve")
 def approve_requirement(requirement_id: int, payload: ApproveIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    requirement, _, _ = _owned_requirement(db, requirement_id, user)
+    requirement, session, _ = _owned_requirement(db, requirement_id, user)
+    _ensure_session_active(session)
     latest = _latest_version(db, requirement.id)
     if not latest:
         raise HTTPException(400, "Nothing to approve yet")
@@ -432,10 +474,14 @@ def _discovery_items(db: DBSession, session_id: int) -> list[dict]:
 
 @app.get("/sessions/{session_id}/report")
 def get_session_report(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _, project = _owned_session(db, session_id, user)
+    session, project = _owned_session(db, session_id, user)
     return {
         "session_id": session_id,
         "project_name": project.name,
+        "client_name": project.client_name,
+        "started_at": session.started_at.isoformat(),
+        "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        "status": "completed" if session.ended_at else "active",
         "discovery": _discovery_items(db, session_id),
         "requirements": _report_items(db, session_id),
     }
@@ -443,12 +489,17 @@ def get_session_report(session_id: int, db: DBSession = Depends(get_db), user: m
 
 @app.get("/sessions/{session_id}/report/docx")
 def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    _, project = _owned_session(db, session_id, user)
+    session, project = _owned_session(db, session_id, user)
     discovery = _discovery_items(db, session_id)
     items = _report_items(db, session_id)
 
     doc = Document()
     doc.add_heading(f"{project.name} — Requirements", level=1)
+    if project.client_name:
+        doc.add_paragraph(f"Client: {project.client_name}")
+    doc.add_paragraph(f"Date: {session.started_at.day} {session.started_at.strftime('%B %Y')}")
+    doc.add_paragraph(f"Day: {session.started_at.strftime('%A')}")
+    doc.add_paragraph(f"Time: {session.started_at.strftime('%I:%M %p')}")
     doc.add_paragraph(f"Generated by ClearReq AI on {datetime.utcnow().strftime('%Y-%m-%d')}")
 
     doc.add_heading("Project Discovery", level=2)

@@ -16,8 +16,8 @@
     nextSession: 3,
     nextReq: 1,
     sessions: [
-      { session_id: 1, project_name: "Hospital Management System", discovery: [] },
-      { session_id: 2, project_name: "Online Store", discovery: [] },
+      { session_id: 1, project_name: "Hospital Management System", discovery: [], status: "active" },
+      { session_id: 2, project_name: "Online Store", discovery: [], status: "active" },
     ],
     requirements: [],
   };
@@ -73,6 +73,22 @@
     });
   }
 
+  function ensureActiveSession(sessionId) {
+    var session = db.sessions.find(function (s) {
+      return s.session_id === Number(sessionId);
+    });
+    if (!session) throw new Error("Session not found");
+    if (session.status === "completed" || session.ended_at) {
+      throw new Error("This session is completed and read-only.");
+    }
+    return session;
+  }
+
+  function ensureRequirementSessionActive(requirement) {
+    if (!requirement) throw new Error("Requirement not found");
+    ensureActiveSession(requirement.session_id);
+  }
+
   function summary(s) {
     var mine = db.requirements.filter(function (r) {
       return r.session_id === s.session_id;
@@ -80,9 +96,16 @@
     return {
       session_id: s.session_id,
       project_name: s.project_name,
+      client_name: s.client_name || null,
+      started_at: s.started_at || null,
+      ended_at: s.ended_at || null,
+      status: s.status || (s.ended_at ? "completed" : "active"),
       requirement_count: mine.length,
       translated_count: mine.filter(function (r) {
         return r.translated_text;
+      }).length,
+      approved_count: mine.filter(function (r) {
+        return r.status === "approved";
       }).length,
     };
   }
@@ -97,17 +120,43 @@
     if (path === "/sessions" && method === "GET") return db.sessions.map(summary);
 
     if (path === "/sessions" && method === "POST") {
-      var s = { session_id: db.nextSession++, project_name: body.project_name, discovery: [] };
+      var s = {
+        session_id: db.nextSession++,
+        project_name: body.project_name,
+        client_name: body.client_name || null,
+        started_at: new Date().toISOString(),
+        status: "active",
+        discovery: [],
+      };
       db.sessions.unshift(s);
-      return { session_id: s.session_id, project_name: s.project_name };
+      return {
+        session_id: s.session_id,
+        project_name: s.project_name,
+        client_name: s.client_name,
+        started_at: s.started_at,
+        status: s.status,
+      };
     }
 
     m = path.match(/^\/sessions\/(\d+)\/discovery$/);
     if (m && method === "POST") {
-      db.sessions.find(function (x) {
-        return x.session_id === Number(m[1]);
-      }).discovery = body.answers;
+      ensureActiveSession(m[1]).discovery = body.answers;
       return { ok: true };
+    }
+
+    m = path.match(/^\/sessions\/(\d+)\/complete$/);
+    if (m && method === "POST") {
+      var completedSession = db.sessions.find(function (x) {
+        return x.session_id === Number(m[1]);
+      });
+      if (!completedSession) throw new Error("Session not found");
+      if (!completedSession.ended_at) completedSession.ended_at = new Date().toISOString();
+      completedSession.status = "completed";
+      return {
+        session_id: completedSession.session_id,
+        status: completedSession.status,
+        ended_at: completedSession.ended_at,
+      };
     }
 
     m = path.match(/^\/sessions\/(\d+)\/report$/);
@@ -116,7 +165,12 @@
         return x.session_id === Number(m[1]);
       });
       return {
+        session_id: sess.session_id,
         project_name: sess.project_name,
+        client_name: sess.client_name || null,
+        started_at: sess.started_at || null,
+        ended_at: sess.ended_at || null,
+        status: sess.status || (sess.ended_at ? "completed" : "active"),
         discovery: sess.discovery,
         requirements: db.requirements.filter(function (r) {
           return r.session_id === sess.session_id && r.translated_text;
@@ -125,6 +179,7 @@
     }
 
     if (path === "/requirements/analyze") {
+      ensureActiveSession(body.session_id);
       var hits = rules.filter(function (r) {
         return r.match.test(body.text);
       });
@@ -158,6 +213,7 @@
 
     if (path === "/requirements/translate") {
       var r2 = findReq(body.requirement_id);
+      ensureRequirementSessionActive(r2);
       var clarified = body.answers
         .map(function (a) {
           return a.answer;
@@ -183,13 +239,17 @@
 
     m = path.match(/^\/requirements\/(\d+)\/approve$/);
     if (m) {
-      findReq(m[1]).status = "approved";
+      var approveReq = findReq(m[1]);
+      ensureRequirementSessionActive(approveReq);
+      approveReq.status = "approved";
       return { ok: true };
     }
 
     m = path.match(/^\/requirements\/(\d+)\/edit$/);
     if (m) {
-      findReq(m[1]).translated_text = body.translated_text;
+      var editReq = findReq(m[1]);
+      ensureRequirementSessionActive(editReq);
+      editReq.translated_text = body.translated_text;
       return { ok: true };
     }
 
