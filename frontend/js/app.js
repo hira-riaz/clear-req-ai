@@ -19,37 +19,6 @@
 
   /* ---------- content ---------- */
 
-  const landingDemoExamples = [
-    {
-      requirement: "The web app should allow users to capture the current scene quickly and securely.",
-      highlights: ["quickly", "securely"],
-      status: "2 ambiguities detected",
-      kind: "ambiguity",
-      findings: [
-        { label: "quickly", question: "What does 'quickly' mean?", detail: "Expected response time?" },
-        { label: "securely", question: "What security requirements are expected?" },
-      ],
-    },
-    {
-      requirement: "The web app should allow to capture the current scene.",
-      highlights: ["capture the current scene"],
-      status: "Ambiguity detected",
-      kind: "ambiguity",
-      findings: [
-        { label: "capture the current scene", question: "Capture from the web camera?", detail: "Why should the system capture the scene?" },
-      ],
-    },
-    {
-      requirement: "The web app should allow users to capture the current scene.",
-      highlights: [],
-      status: "Conflict detected",
-      kind: "conflict",
-      findings: [
-        { label: "Project context conflicts with this requirement", discovery: "Mobile Application", requirement: "Web Application" },
-      ],
-    },
-  ];
-
   const discoveryQuestions = [
     { question: "What platform(s) should this system run on?", options: ["Web", "Mobile app", "Desktop", "Multiple platforms"] },
     { question: "Who are the primary users of this system?", options: ["General public", "Internal staff/employees", "Business customers", "Mixed / multiple user types"] },
@@ -103,7 +72,9 @@
       notice: "",
       helpOpen: false,
       completeConfirmOpen: false,
+      deleteConfirmSession: null,
       sidebarOpen: true,
+      sidebarWidth: 256,
       discoveryIndex: 0,
       discoveryAnswers: [],
       requirementText: "",
@@ -248,6 +219,20 @@
       : '<span class="brand">' + inner + "</span>";
   }
 
+  const SIDEBAR_MIN_WIDTH = 200;
+  const SIDEBAR_MAX_WIDTH = 400;
+
+  function setSidebarWidth(width) {
+    state.sidebarWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, width));
+    const shell = $(".shell");
+    const handle = $(".sidebar-resize-handle");
+    if (shell) shell.style.setProperty("--sidebar-width", state.sidebarWidth + "px");
+    if (handle) {
+      handle.setAttribute("aria-valuenow", String(state.sidebarWidth));
+      handle.setAttribute("aria-valuetext", state.sidebarWidth + " pixels");
+    }
+  }
+
   function displayName() {
     return (state.user && ((state.user.user_metadata && state.user.user_metadata.name) || state.user.email)) || "there";
   }
@@ -341,14 +326,18 @@
       '<h1 class="display">Turn vague ideas into clear requirements</h1>' +
       '<p class="lead">ClearReq examines requirements in context, surfaces unclear or conflicting details, and guides your team toward clear, reviewable requirements.</p>' +
       '<div class="cta"><a class="btn btn-primary btn-lg" href="#signup">Get started</a></div></div>' +
-      '<section class="product-demo glass" data-animated-demo aria-label="Illustrative ClearReq requirement analysis">' +
+      '<section class="product-demo glass" aria-label="Illustrative ClearReq requirement analysis">' +
       '<div class="demo-header"><div><p class="demo-kicker">CLEARREQ AI</p><p class="demo-editor-title">Requirement intelligence</p></div>' +
-      '<span class="demo-status" data-demo-status aria-live="polite"><span class="demo-status-dot"></span><span data-demo-status-text>Ready</span></span></div>' +
+      '<span class="demo-status"><span class="demo-status-dot"></span><span>Example analysis</span></span></div>' +
       '<div class="demo-editor"><div class="demo-editor-bar"><span></span><span></span><span></span><p>Requirement editor</p></div>' +
-      '<div class="demo-editor-body"><p class="demo-label">USER REQUIREMENT</p><p class="demo-requirement"><span data-demo-requirement></span><span class="demo-cursor" aria-hidden="true"></span></p>' +
-      '<span class="demo-scan-line" aria-hidden="true"></span></div></div>' +
-      '<section class="demo-results" data-demo-results aria-label="Analysis results" aria-live="polite"></section>' +
-      '<p class="demo-footnote">Illustrative product demo · no live analysis is running</p>' +
+      '<div class="demo-editor-body"><p class="demo-label">USER REQUIREMENT</p><p class="demo-requirement">The web app should allow users to capture the current scene <mark class="demo-highlight">quickly</mark> and <mark class="demo-highlight">securely</mark>.</p></div></div>' +
+      '<section class="demo-results" aria-label="Illustrative analysis results">' +
+      '<div class="demo-results-head"><span class="demo-results-mark"></span><h3>2 ambiguities detected</h3></div>' +
+      '<div class="demo-results-list">' +
+      '<article class="demo-result-item"><p class="demo-result-type">AMBIGUITY DETECTED</p><span class="demo-term">quickly</span><p class="demo-result-question">What does “quickly” mean?</p><p class="demo-result-detail">Expected response time?</p></article>' +
+      '<article class="demo-result-item"><p class="demo-result-type">AMBIGUITY DETECTED</p><span class="demo-term">securely</span><p class="demo-result-question">What security requirements are expected?</p></article>' +
+      '</div></section>' +
+      '<p class="demo-footnote">Illustrative example · no live analysis is running</p>' +
       '</section></section>' +
       '<section class="landing-value"><p class="landing-kicker">WHY CLEARREQ</p>' +
       '<h2 class="display">Catch the unanswered questions before they become rework.</h2>' +
@@ -451,14 +440,13 @@
   
           "</button>" +
   
-          (isCompleted(s) ? "" : '<button class="session-delete" type="button" ' +
+          '<button class="session-delete" type="button" ' +
           'data-action="deleteSession" ' +
           'data-id="' + s.session_id + '" ' +
-          'data-name="' + esc(s.project_name) + '" ' +
           'title="Delete session" aria-label="Delete ' +
           esc(s.project_name) + '">' +
           "×" +
-          "</button>") +
+          "</button>" +
   
           "</div>"
         );
@@ -486,7 +474,9 @@
       '<div class="profile"><span class="avatar">' + esc(firstName().charAt(0).toUpperCase()) + "</span>" +
       '<div class="who"><p class="name">' + esc(displayName()) + '</p><p class="email">' + esc(state.user.email) + "</p></div>" +
       '<button class="icon-btn" type="button" data-action="logout" aria-label="Log out" title="Log out">' + icon("logout") + "</button>" +
-      "</div></aside>"
+      "</div>" +
+      '<div class="sidebar-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" aria-valuemin="' + SIDEBAR_MIN_WIDTH + '" aria-valuemax="' + SIDEBAR_MAX_WIDTH + '" aria-valuenow="' + state.sidebarWidth + '" aria-valuetext="' + state.sidebarWidth + ' pixels" tabindex="0"></div>' +
+      "</aside>"
     );
   }
 
@@ -801,140 +791,20 @@
     );
   }
 
-  let landingDemoRoot = null;
-  let landingDemoTimer = null;
-
-  function scheduleLandingDemo(root, callback, delay) {
-    landingDemoTimer = window.setTimeout(function () {
-      landingDemoTimer = null;
-      if (root === document.querySelector("[data-animated-demo]")) callback();
-    }, delay);
-  }
-
-  function stopLandingDemo() {
-    if (landingDemoTimer !== null) {
-      window.clearTimeout(landingDemoTimer);
-      landingDemoTimer = null;
-    }
-    landingDemoRoot = null;
-  }
-
-  function setLandingDemoStatus(root, text) {
-    const status = root.querySelector("[data-demo-status-text]");
-    if (status) status.textContent = text;
-  }
-
-  function highlightedRequirementHtml(requirement, phrases) {
-    const matches = phrases
-      .map(function (phrase) {
-        return { phrase: phrase, start: requirement.indexOf(phrase) };
-      })
-      .filter(function (match) { return match.start >= 0; })
-      .sort(function (a, b) { return a.start - b.start; });
-    let html = "";
-    let offset = 0;
-    matches.forEach(function (match) {
-      if (match.start < offset) return;
-      html += esc(requirement.slice(offset, match.start)) +
-        '<mark class="demo-highlight">' + esc(match.phrase) + "</mark>";
-      offset = match.start + match.phrase.length;
-    });
-    return html + esc(requirement.slice(offset));
-  }
-
-  function landingFindingHtml(finding, kind, index) {
-    if (kind === "conflict") {
-      return (
-        '<article class="demo-result-item demo-conflict-item" data-demo-item="' + index + '">' +
-        '<p class="demo-result-type">CONFLICT DETECTED</p><p class="demo-result-question">' + esc(finding.label) + "</p>" +
-        '<div class="demo-comparison"><span>Discovery</span><strong>' + esc(finding.discovery) + "</strong></div>" +
-        '<div class="demo-comparison"><span>Requirement</span><strong>' + esc(finding.requirement) + "</strong></div></article>"
-      );
-    }
+  function deleteConfirmHtml() {
+    const session = state.deleteConfirmSession;
+    if (!session) return "";
     return (
-      '<article class="demo-result-item" data-demo-item="' + index + '">' +
-      '<p class="demo-result-type">AMBIGUITY DETECTED</p><span class="demo-term">' + esc(finding.label) + "</span>" +
-      '<p class="demo-result-question">' + esc(finding.question) + "</p>" +
-      (finding.detail ? '<p class="demo-result-detail">' + esc(finding.detail) + "</p>" : "") +
-      "</article>"
+      '<div class="help-overlay" data-action="cancelDelete" data-overlay="delete">' +
+      '<section class="glass help-dialog completion-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-warning">' +
+      '<div class="help-dialog-head"><div><p class="small faint">DELETE SESSION</p>' +
+      '<h2 class="display" id="delete-title">Delete this session?</h2></div></div>' +
+      '<p id="delete-warning" class="completion-warning">The session "' + esc(session.project_name) + '" will be permanently deleted, including its saved requirements and history. This action cannot be undone.</p>' +
+      (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
+      '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelDelete" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
+      '<button class="btn btn-primary delete-confirm-button" type="button" data-action="confirmDelete" ' + (state.busy ? "disabled" : "") + ">" + (state.busy ? "Deleting..." : "Delete Session") + "</button></div>" +
+      "</section></div>"
     );
-  }
-
-  function runLandingDemoExample(root, exampleIndex) {
-    if (root !== document.querySelector("[data-animated-demo]")) return;
-    const example = landingDemoExamples[exampleIndex];
-    const requirement = root.querySelector("[data-demo-requirement]");
-    const results = root.querySelector("[data-demo-results]");
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let characterIndex = 0;
-
-    root.classList.remove("is-scanning", "is-highlighted", "is-resetting");
-    requirement.textContent = "";
-    results.innerHTML = "";
-    setLandingDemoStatus(root, "Typing requirement");
-
-    function finishTyping() {
-      setLandingDemoStatus(root, "Analyzing requirement...");
-      root.classList.add("is-scanning");
-      scheduleLandingDemo(root, finishScan, reducedMotion ? 0 : 1350);
-    }
-
-    function finishScan() {
-      root.classList.remove("is-scanning");
-      requirement.innerHTML = highlightedRequirementHtml(example.requirement, example.highlights);
-      root.classList.add("is-highlighted");
-      setLandingDemoStatus(root, example.status);
-      results.innerHTML =
-        '<div class="demo-results-head"><span class="demo-results-mark"></span><h3>' + esc(example.status) + "</h3></div>" +
-        '<div class="demo-results-list">' +
-        example.findings.map(function (finding, index) {
-          return landingFindingHtml(finding, example.kind, index);
-        }).join("") +
-        "</div>";
-
-      const items = Array.from(results.querySelectorAll("[data-demo-item]"));
-      results.classList.add("is-visible");
-      let itemIndex = 0;
-
-      function revealNext() {
-        if (itemIndex < items.length) {
-          items[itemIndex].classList.add("is-visible");
-          itemIndex += 1;
-          scheduleLandingDemo(root, revealNext, reducedMotion ? 0 : 650);
-          return;
-        }
-        scheduleLandingDemo(root, nextExample, exampleIndex === 0 ? 6200 : 5000);
-      }
-
-      revealNext();
-    }
-
-    function nextExample() {
-      root.classList.add("is-resetting");
-      scheduleLandingDemo(root, function () {
-        runLandingDemoExample(root, (exampleIndex + 1) % landingDemoExamples.length);
-      }, reducedMotion ? 0 : 450);
-    }
-
-    function typeNextCharacter() {
-      if (characterIndex >= example.requirement.length) {
-        finishTyping();
-        return;
-      }
-      characterIndex += 1;
-      requirement.textContent = example.requirement.slice(0, characterIndex);
-      scheduleLandingDemo(root, typeNextCharacter, reducedMotion ? 0 : 38);
-    }
-
-    typeNextCharacter();
-  }
-
-  function startLandingDemo() {
-    const root = document.querySelector("[data-animated-demo]");
-    if (!root || root === landingDemoRoot) return;
-    stopLandingDemo();
-    landingDemoRoot = root;
-    runLandingDemoExample(root, 0);
   }
 
   function pageHtml() {
@@ -960,7 +830,7 @@
   function workspaceHtml() {
     const focused = state.workflow !== "dashboard" && state.workflow !== "reports";
     return (
-      '<div class="app-bg shell' + (focused ? " session-focused" : "") + (focused && !state.sidebarOpen ? " sidebar-collapsed" : "") + '">' + sidebarHtml() +
+      '<div class="app-bg shell' + (focused ? " session-focused" : "") + (focused && !state.sidebarOpen ? " sidebar-collapsed" : "") + '" style="--sidebar-width:' + state.sidebarWidth + 'px">' + sidebarHtml() +
       '<main class="main">' +
       (focused
         ? '<button class="sidebar-toggle" type="button" data-action="toggleSidebar" aria-expanded="' + state.sidebarOpen + '" aria-label="' + (state.sidebarOpen ? "Hide session sidebar" : "Show session sidebar") + '">' + (state.sidebarOpen ? "Hide sidebar" : "Show sidebar") + "</button>"
@@ -969,6 +839,7 @@
       (state.workflow === "dashboard" ? dashboardHtml() : (state.workflow === "reports" ? pageHtml() : stepsHtml() + pageHtml())) +
       (state.helpOpen ? helpGuideHtml() : "") +
       (state.completeConfirmOpen ? completeConfirmHtml() : "") +
+      (state.deleteConfirmSession ? deleteConfirmHtml() : "") +
       "</main></div>"
     );
   }
@@ -978,9 +849,7 @@
   function render() {
     if (state.view === "landing") {
       app.innerHTML = landingHtml();
-      startLandingDemo();
     } else {
-      stopLandingDemo();
       if (state.view === "auth") app.innerHTML = authHtml();
       else app.innerHTML = workspaceHtml();
     }
@@ -1097,48 +966,56 @@
       go(state.workflow);
     }
   }
-async function deleteSession(id, name) {
-  if (!id || state.busy) return;
-
-  const confirmed = window.confirm(
-    'Delete "' + name + '"?\n\nThis session will be permanently deleted.'
-  );
-
-  if (!confirmed) return;
-
-  state.busy = true;
-  clearMessages();
-
-  try {
-    await api("/sessions/" + id, {
-      method: "DELETE"
+  function requestDeleteSession(id) {
+    if (!id || state.busy) return;
+    const session = state.sessions.find(function (item) {
+      return item.session_id === id;
     });
-
-    state.sessions = state.sessions.filter(function (s) {
-      return s.session_id !== id;
-    });
-
-    if (state.selectedId === id) {
-      state.selectedId = state.sessions.length
-        ? state.sessions[0].session_id
-        : null;
-
-      state.workflow = "dashboard";
-      state.report = null;
-      state.requirementText = "";
-      state.requirementId = null;
-      state.ambiguities = [];
-      state.answers = {};
-    }
-
-    state.notice = "Session deleted successfully.";
-  } catch (error) {
-    state.error = error.message;
-  } finally {
-    state.busy = false;
+    if (!session) return;
+    clearMessages();
+    state.deleteConfirmSession = session;
     render();
   }
-}
+
+  async function deleteSession() {
+    const session = state.deleteConfirmSession;
+    if (!session || state.busy) return;
+    const id = session.session_id;
+    state.busy = true;
+    clearMessages();
+    render();
+
+    try {
+      await api("/sessions/" + id, {
+        method: "DELETE"
+      });
+
+      state.sessions = state.sessions.filter(function (s) {
+        return s.session_id !== id;
+      });
+      state.deleteConfirmSession = null;
+
+      if (state.selectedId === id) {
+        state.selectedId = state.sessions.length
+          ? state.sessions[0].session_id
+          : null;
+
+        state.workflow = "dashboard";
+        state.report = null;
+        state.requirementText = "";
+        state.requirementId = null;
+        state.ambiguities = [];
+        state.answers = {};
+      }
+
+      state.notice = "Session deleted successfully.";
+    } catch (error) {
+      state.error = error.message;
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
 
   async function analyzeRequirement() {
     const text = state.requirementText.trim();
@@ -1347,6 +1224,8 @@ async function deleteSession(id, name) {
         state.report.ended_at = result.ended_at;
       }
       state.completeConfirmOpen = false;
+      state.workflow = "dashboard";
+      state.sidebarOpen = true;
       state.notice = "Session completed. It is now read-only.";
     } catch (error) {
       state.completeConfirmOpen = false;
@@ -1442,7 +1321,15 @@ async function deleteSession(id, name) {
     },
     
     deleteSession: function (data) {
-      deleteSession(Number(data.id), data.name);
+      requestDeleteSession(Number(data.id));
+    },
+    confirmDelete: function () {
+      deleteSession();
+    },
+    cancelDelete: function () {
+      if (state.busy) return;
+      state.deleteConfirmSession = null;
+      render();
     },
 
     newSession: function () {
@@ -1598,9 +1485,34 @@ async function deleteSession(id, name) {
   app.addEventListener("click", function (event) {
     const el = event.target.closest("[data-action]");
     if (!el || el.disabled) return;
+    if (el.dataset.overlay === "delete" && event.target !== el) return;
     const handler = actions[el.dataset.action];
     if (handler) handler(el.dataset);
   });
+
+  let sidebarResize = null;
+
+  app.addEventListener("pointerdown", function (event) {
+    if (!event.target.closest(".sidebar-resize-handle") || window.innerWidth <= 767) return;
+    event.preventDefault();
+    sidebarResize = { pointerId: event.pointerId, startX: event.clientX, startWidth: state.sidebarWidth };
+    document.body.classList.add("sidebar-resizing");
+    if (event.target.setPointerCapture) event.target.setPointerCapture(event.pointerId);
+  });
+
+  window.addEventListener("pointermove", function (event) {
+    if (!sidebarResize || event.pointerId !== sidebarResize.pointerId) return;
+    setSidebarWidth(sidebarResize.startWidth + event.clientX - sidebarResize.startX);
+  });
+
+  function finishSidebarResize(event) {
+    if (!sidebarResize || (event && event.pointerId !== sidebarResize.pointerId)) return;
+    sidebarResize = null;
+    document.body.classList.remove("sidebar-resizing");
+  }
+
+  window.addEventListener("pointerup", finishSidebarResize);
+  window.addEventListener("pointercancel", finishSidebarResize);
 
   app.addEventListener("input", function (event) {
     const key = event.target.dataset && event.target.dataset.model;
@@ -1608,9 +1520,17 @@ async function deleteSession(id, name) {
   });
 
   app.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && (state.helpOpen || state.completeConfirmOpen)) {
+    if (event.target.matches(".sidebar-resize-handle") && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      setSidebarWidth(state.sidebarWidth + (event.key === "ArrowRight" ? 16 : -16));
+      return;
+    }
+
+    if (event.key === "Escape" && (state.helpOpen || state.completeConfirmOpen || state.deleteConfirmSession)) {
+      if (state.busy) return;
       state.helpOpen = false;
       state.completeConfirmOpen = false;
+      state.deleteConfirmSession = null;
       render();
       return;
     }

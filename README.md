@@ -7,6 +7,8 @@ versioned, development-ready requirement translations.
 See `docs/` for the architecture diagrams and the full planning document, and
 `context/` for the project knowledge files used with Claude.ai.
 
+![ClearReq AI layered architecture](docs/diagram_architecture.svg)
+
 ## Project layout
 
 ```

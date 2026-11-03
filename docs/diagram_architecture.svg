@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="1120" viewBox="0 0 1480 1120" role="img" aria-labelledby="title description">
+  <title id="title">ClearReq AI layered architecture</title>
+  <desc id="description">A layered view of ClearReq AI from users and the browser interface through the FastAPI application, domain services, data access, and database, with Supabase Auth and Gemini and Groq as external services.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#526176"/>
+    </marker>
+    <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#168a78"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #17243b; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 16px; fill: #59677a; }
+      .layer-title { font-size: 15px; font-weight: 700; letter-spacing: 1.1px; fill: #526176; }
+      .box-title { font-size: 18px; font-weight: 700; }
+      .box-copy { font-size: 14px; fill: #46556a; }
+      .small { font-size: 12px; fill: #59677a; }
+      .external-title { font-size: 19px; font-weight: 700; }
+      .external-copy { font-size: 14px; fill: #46556a; }
+      .layer { stroke: #d7deea; stroke-width: 1.4; }
+      .component { fill: #ffffff; stroke: #aab8ca; stroke-width: 1.5; }
+      .integration { fill: #e9f7f3; stroke: #59b99f; stroke-width: 1.6; }
+      .flow { fill: none; stroke: #526176; stroke-width: 2.2; marker-end: url(#arrow); }
+      .external-flow { fill: none; stroke: #168a78; stroke-width: 2.1; marker-end: url(#arrow-teal); }
+      .return-flow { fill: none; stroke: #7d8ba0; stroke-width: 1.8; stroke-dasharray: 6 6; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1480" height="1120" fill="#f7f9fc"/>
+  <text x="64" y="58" class="title">ClearReq AI | Layered Architecture</text>
+  <text x="64" y="86" class="subtitle">A single FastAPI service delivers the web UI and coordinates secure, versioned requirement analysis.</text>
+
+  <text x="64" y="127" class="layer-title">APPLICATION LAYERS</text>
+  <text x="1112" y="127" class="layer-title">EXTERNAL SERVICES</text>
+
+  <!-- Presentation -->
+  <rect x="52" y="145" width="1016" height="150" rx="14" class="layer" fill="#edf3fb"/>
+  <text x="74" y="173" class="layer-title">01  PRESENTATION</text>
+  <rect x="92" y="190" width="420" height="78" rx="10" class="component"/>
+  <text x="112" y="219" class="box-title">Browser UI</text>
+  <text x="112" y="242" class="box-copy">HTML, CSS, JavaScript · discovery, clarification, review, reports</text>
+  <text x="112" y="259" class="small">frontend/ · served by FastAPI from the same origin</text>
+  <rect x="548" y="190" width="470" height="78" rx="10" class="component"/>
+  <text x="568" y="219" class="box-title">Web client and API adapter</text>
+  <text x="568" y="242" class="box-copy">Supabase browser SDK · JSON API calls · bearer access token</text>
+  <text x="568" y="259" class="small">Auth session management and protected requests</text>
+
+  <!-- API and application -->
+  <rect x="52" y="315" width="1016" height="150" rx="14" class="layer" fill="#eef5f8"/>
+  <text x="74" y="343" class="layer-title">02  API / APPLICATION</text>
+  <rect x="92" y="360" width="510" height="78" rx="10" class="component"/>
+  <text x="112" y="389" class="box-title">FastAPI routes</text>
+  <text x="112" y="412" class="box-copy">Sessions · discovery · analyze · translate · review · report / DOCX</text>
+  <text x="112" y="429" class="small">backend/app/main.py · request orchestration and response shaping</text>
+  <rect x="638" y="360" width="380" height="78" rx="10" class="component"/>
+  <text x="658" y="389" class="box-title">Authentication and access control</text>
+  <text x="658" y="412" class="box-copy">Verify Supabase token · map local user · enforce ownership</text>
+  <text x="658" y="429" class="small">backend/app/auth.py</text>
+
+  <!-- Domain services -->
+  <rect x="52" y="485" width="1016" height="234" rx="14" class="layer" fill="#f2f5fb"/>
+  <text x="74" y="513" class="layer-title">03  DOMAIN / PROCESSING SERVICES</text>
+  <rect x="82" y="532" width="286" height="148" rx="10" class="component"/>
+  <text x="102" y="562" class="box-title">Ambiguity detection</text>
+  <text x="102" y="587" class="box-copy">Rule-based detector</text>
+  <text x="102" y="609" class="small">Lexicon + spaCy POS tagging</text>
+  <text x="102" y="632" class="box-copy">AI ambiguity detector</text>
+  <text x="102" y="655" class="small">Results merged and deduplicated by term</text>
+  <rect x="408" y="532" width="286" height="148" rx="10" class="component"/>
+  <text x="428" y="562" class="box-title">Clarification workflow</text>
+  <text x="428" y="588" class="box-copy">Generate questions and answer options</text>
+  <text x="428" y="612" class="box-copy">Capture answers and project discovery</text>
+  <text x="428" y="642" class="small">Answers are associated with ambiguities</text>
+  <rect x="734" y="532" width="306" height="148" rx="10" class="component"/>
+  <text x="754" y="562" class="box-title">Translation and review</text>
+  <text x="754" y="588" class="box-copy">Translate with clarifications and context</text>
+  <text x="754" y="612" class="box-copy">Confidence · version history · approvals</text>
+  <text x="754" y="642" class="small">Conflict checks · report and DOCX export</text>
+
+  <!-- Data access and persistence -->
+  <rect x="52" y="739" width="1016" height="160" rx="14" class="layer" fill="#f4f6f7"/>
+  <text x="74" y="767" class="layer-title">04  DATA ACCESS / PERSISTENCE</text>
+  <rect x="92" y="784" width="420" height="82" rx="10" class="component"/>
+  <text x="112" y="814" class="box-title">SQLAlchemy ORM</text>
+  <text x="112" y="838" class="box-copy">Models, relationships, queries and migrations</text>
+  <text x="112" y="856" class="small">backend/app/models.py · database.py</text>
+  <rect x="548" y="784" width="470" height="82" rx="10" class="component"/>
+  <text x="568" y="814" class="box-title">Relational data store</text>
+  <text x="568" y="838" class="box-copy">SQLite by default · PostgreSQL when DATABASE_URL is configured</text>
+  <text x="568" y="856" class="small">Users · projects · sessions · requirements · clarifications · versions · approvals</text>
+
+  <!-- User actor -->
+  <rect x="380" y="102" width="350" height="34" rx="17" fill="#ffffff" stroke="#b9c5d5" stroke-width="1.3"/>
+  <text x="555" y="124" text-anchor="middle" class="box-copy">Requirement engineer / project stakeholder</text>
+  <path d="M555 136 V185" class="flow"/>
+
+  <!-- Intra-layer and inter-layer flows -->
+  <path d="M302 268 V354" class="flow"/>
+  <text x="314" y="315" class="small">HTTPS / JSON</text>
+  <path d="M820 268 V354" class="flow"/>
+  <path d="M820 438 V476" class="flow"/>
+  <path d="M225 438 C225 482 225 492 225 524" class="flow"/>
+  <path d="M368 607 H400" class="flow"/>
+  <path d="M694 607 H726" class="flow"/>
+  <path d="M555 680 V778" class="flow"/>
+  <path d="M796 680 C796 728 796 739 796 778" class="flow"/>
+  <path d="M302 866 V914 H780 V866" class="return-flow"/>
+  <text x="532" y="929" text-anchor="middle" class="small">Persist and retrieve application records</text>
+
+  <!-- External integrations -->
+  <rect x="1100" y="177" width="322" height="132" rx="12" class="integration"/>
+  <text x="1124" y="211" class="external-title">Supabase Auth</text>
+  <text x="1124" y="239" class="external-copy">Sign-in, sign-up and token validation</text>
+  <text x="1124" y="262" class="external-copy">Identity provider for protected requests</text>
+  <text x="1124" y="287" class="small">External managed authentication service</text>
+  <path d="M1018 222 H1085" class="external-flow"/>
+  <path d="M1018 399 H1073 V287 H1085" class="external-flow"/>
+  <text x="1045" y="382" class="small">verify token</text>
+
+  <rect x="1100" y="525" width="322" height="166" rx="12" class="integration"/>
+  <text x="1124" y="560" class="external-title">AI model providers</text>
+  <text x="1124" y="590" class="external-copy">Gemini · primary provider</text>
+  <text x="1124" y="616" class="external-copy">Groq · fallback on provider failure</text>
+  <text x="1124" y="647" class="small">Centralized in ai_provider.py</text>
+  <text x="1124" y="669" class="small">Synchronous API calls; keys from environment</text>
+  <path d="M1040 571 H1085" class="external-flow"/>
+  <path d="M1040 644 H1085" class="external-flow"/>
+  <text x="1058" y="556" class="small">AI tasks</text>
+
+  <rect x="1100" y="751" width="322" height="105" rx="12" fill="#ffffff" stroke="#c7d0dc" stroke-width="1.4"/>
+  <text x="1124" y="784" class="box-title">Deployment note</text>
+  <text x="1124" y="809" class="box-copy">FastAPI serves the frontend and API</text>
+  <text x="1124" y="831" class="box-copy">from one application service.</text>
+
+  <line x1="64" y1="974" x2="1416" y2="974" stroke="#d7deea" stroke-width="1.2"/>
+  <text x="64" y="1005" class="small">Solid arrows show request or processing flow. Dashed arrow shows persisted data being read back by the application.</text>
+  <text x="64" y="1032" class="small">Evaluation scripts and labelled datasets are a separate research workflow and are not part of the production request path.</text>
+  <text x="64" y="1073" class="small">Source components: frontend/ · backend/app/main.py · auth.py · rule_detector.py · ai_provider.py · database.py · models.py</text>
+</svg>

@@ -1,19 +1,29 @@
 # Architecture context — ClearReq AI
 
-## System layers
-```
-Frontend (plain HTML, CSS, and JavaScript, frontend/)
-      |
-FastAPI backend (backend/app/main.py)
-      |
-      +---> Rule-based detector (backend/app/rule_detector.py)
-      |
-      +---> AI provider (backend/app/ai_provider.py)
-              - Gemini (primary)
-              - Groq (fallback on failure)
-      |
-SQLite database (backend/clearreq.db)
-```
+## Layered system architecture
+See `docs/diagram_architecture.svg` for the rendered layered architecture.
+
+1. **Presentation:** Plain HTML, CSS, and JavaScript browser UI; Supabase
+   browser SDK manages sign-in and sends bearer tokens with protected API
+   requests. FastAPI serves the frontend from the same origin.
+2. **API / application:** FastAPI routes in `backend/app/main.py` handle
+   sessions, discovery, requirement analysis and translation, review,
+   reporting, and DOCX export. `auth.py` verifies Supabase tokens and enforces
+   local user and project ownership.
+3. **Domain / processing:** The rule-based detector (lexicon and spaCy POS)
+   and AI ambiguity detector run on submitted requirements. The application
+   merges detections, manages clarification answers, translates requirements,
+   records confidence and versions, and supports review and reporting.
+4. **Data access / persistence:** SQLAlchemy models and database access
+   persist users, projects, sessions, requirements, ambiguities,
+   clarifications, versions, discovery answers, and approvals. SQLite is the
+   default;
+5. **External integrations:** Supabase Auth provides identity verification.
+   `ai_provider.py` centralizes Gemini as the primary model provider and Groq
+   as the fallback.
+
+The evaluation scripts and labelled datasets are a separate research workflow,
+not part of the production request path.
 
 ## Request flow — detection phase
 1. Supabase Auth supplies the user access token; the frontend sends it as a
@@ -48,9 +58,9 @@ SQLite database (backend/clearreq.db)
   the same origin as the backend.
 
 ## Key design rule: never call the AI provider directly from routes
-All AI calls go through `ai_provider.py`'s `detect_ambiguity()` and
-`translate()` functions. This keeps the Gemini→Groq fallback logic in one
-place and means main.py never needs to know which vendor actually answered.
+All AI calls go through `ai_provider.py`. This keeps the Gemini→Groq fallback
+logic in one place and means `main.py` never needs to know which vendor
+actually answered.
 
 ## Database schema
 See docs/diagram_erd.png and docs/ClearReq_AI_Planning_Document.docx
@@ -59,7 +69,8 @@ versioned — a Requirement can have multiple RequirementVersions over time,
 so re-translating never destroys history.
 
 ## Deliberate scope decisions (don't "fix" these without asking)
-- SQLite, not Postgres — correct for this project's scale.
+- SQLite is the default local database; PostgreSQL is supported through
+  `DATABASE_URL` for deployment.
 - Supabase Auth protects user data; keep identity checks and ownership
   enforcement on the backend.
 - No Celery/background task queue — synchronous AI calls are fine at this

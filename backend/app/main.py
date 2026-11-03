@@ -323,7 +323,7 @@ def analyze_requirement(payload: RequirementIn, db: DBSession = Depends(get_db),
         existing_texts.append(latest.translated_text if latest else other.original_text)
     for c in ai_provider.check_conflicts(payload.text, existing_texts):
         merged.append({
-            "term": f"conflict with: {c['conflicts_with'][:60]}",
+            "term": f"conflict with: {c['conflicts_with'][:120]}",
             "category": "conflict",
             "detector": "ai",
             "confidence": 1.0,
@@ -492,6 +492,12 @@ def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user:
     session, project = _owned_session(db, session_id, user)
     discovery = _discovery_items(db, session_id)
     items = _report_items(db, session_id)
+    original_requirements = (
+        db.query(models.Requirement)
+        .filter(models.Requirement.session_id == session_id)
+        .order_by(models.Requirement.id)
+        .all()
+    )
 
     doc = Document()
     doc.add_heading(f"{project.name} — Requirements", level=1)
@@ -526,6 +532,13 @@ def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user:
     for cat in sorted({e["category"] for e in nfr}):
         doc.add_heading(cat.capitalize(), level=3)
         write_list([e for e in nfr if e["category"] == cat])
+
+    doc.add_heading("Original Requirements", level=2)
+    if original_requirements:
+        for i, requirement in enumerate(original_requirements, 1):
+            doc.add_paragraph(f"{i}. {requirement.original_text}")
+    else:
+        doc.add_paragraph("(none)")
 
     buffer = io.BytesIO()
     doc.save(buffer)

@@ -138,6 +138,20 @@
       };
     }
 
+    m = path.match(/^\/sessions\/(\d+)$/);
+    if (m && method === "DELETE") {
+      var deletingId = Number(m[1]);
+      var sessionIndex = db.sessions.findIndex(function (session) {
+        return session.session_id === deletingId;
+      });
+      if (sessionIndex < 0) throw new Error("Session not found");
+      db.sessions.splice(sessionIndex, 1);
+      db.requirements = db.requirements.filter(function (requirement) {
+        return requirement.session_id !== deletingId;
+      });
+      return { status: "deleted" };
+    }
+
     m = path.match(/^\/sessions\/(\d+)\/discovery$/);
     if (m && method === "POST") {
       ensureActiveSession(m[1]).discovery = body.answers;
