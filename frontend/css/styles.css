@@ -889,9 +889,14 @@ button.nav-item:hover:not(:disabled) {
   text-align: left;
 }
 .session-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.session-row.menu-open {
+  z-index: 2;
 }
 
 .session-row .session-item {
@@ -899,7 +904,7 @@ button.nav-item:hover:not(:disabled) {
   flex: 1;
 }
 
-.session-delete {
+.session-menu-toggle {
   display: grid;
   place-items: center;
   width: 30px;
@@ -908,16 +913,63 @@ button.nav-item:hover:not(:disabled) {
   border: 0;
   border-radius: 8px;
   background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.session-row:hover .session-menu-toggle,
+.session-row:focus-within .session-menu-toggle,
+.session-row.menu-open .session-menu-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-menu-toggle .icon {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.4;
+}
+
+.session-menu-toggle:hover {
+  background: var(--tint);
+  color: var(--ink);
+}
+
+.session-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 4px;
+  z-index: 3;
+  width: 140px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(31, 27, 24, 0.14);
+}
+
+.session-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+}
+
+.session-menu button:hover:not(:disabled) {
+  background: var(--tint);
+}
+
+.session-menu button:disabled {
   color: var(--faint);
-  font-size: 20px;
-  line-height: 1;
+  cursor: not-allowed;
 }
-
-.session-delete:hover {
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
 
 .session-item:hover {
   background: var(--tint);

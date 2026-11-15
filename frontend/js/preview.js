@@ -139,6 +139,15 @@
     }
 
     m = path.match(/^\/sessions\/(\d+)$/);
+    if (m && method === "PATCH") {
+      var renamingSession = ensureActiveSession(m[1]);
+      renamingSession.project_name = body.project_name;
+      return {
+        session_id: renamingSession.session_id,
+        project_name: renamingSession.project_name,
+      };
+    }
+
     if (m && method === "DELETE") {
       var deletingId = Number(m[1]);
       var sessionIndex = db.sessions.findIndex(function (session) {

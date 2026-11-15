@@ -73,6 +73,9 @@
       helpOpen: false,
       completeConfirmOpen: false,
       deleteConfirmSession: null,
+      renameConfirmSession: null,
+      renameProjectName: "",
+      openSessionMenuId: null,
       sidebarOpen: true,
       sidebarWidth: 256,
       discoveryIndex: 0,
@@ -150,6 +153,7 @@
     logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
     arrowUp: "M12 19V5M5 12l7-7 7 7",
     check: "M5 12l5 5L20 7",
+    more: "M5 12h.01M12 12h.01M19 12h.01",
     file: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5",
     question: "M9.5 9a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8M12 17h.01",
     list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
@@ -419,7 +423,9 @@
         const selected = s.session_id === state.selectedId;
   
         return (
-          '<div class="session-row">' +
+          '<div class="session-row' +
+          (state.openSessionMenuId === s.session_id ? " menu-open" : "") +
+          '" data-session-id="' + s.session_id + '">' +
   
           '<button type="button" class="session-item' +
           (selected ? " selected" : "") + '"' +
@@ -439,14 +445,22 @@
           "</span>" +
   
           "</button>" +
-  
-          '<button class="session-delete" type="button" ' +
-          'data-action="deleteSession" ' +
-          'data-id="' + s.session_id + '" ' +
-          'title="Delete session" aria-label="Delete ' +
-          esc(s.project_name) + '">' +
-          "×" +
+
+          '<button class="session-menu-toggle" type="button" ' +
+          'data-action="toggleSessionMenu" data-id="' + s.session_id + '" ' +
+          'aria-label="Session options for ' + esc(s.project_name) + '" ' +
+          'aria-haspopup="menu" aria-expanded="' + (state.openSessionMenuId === s.session_id) + '">' +
+          icon("more") +
           "</button>" +
+
+          (state.openSessionMenuId === s.session_id
+            ? '<div class="session-menu" role="menu">' +
+              '<button type="button" role="menuitem" data-action="renameSession" data-id="' + s.session_id + '"' +
+              (isCompleted(s) || state.busy ? " disabled" : "") + ">Rename</button>" +
+              '<button type="button" role="menuitem" data-action="deleteSession" data-id="' + s.session_id + '"' +
+              (state.busy ? " disabled" : "") + ">Delete</button>" +
+              "</div>"
+            : "") +
   
           "</div>"
         );
@@ -807,6 +821,26 @@
     );
   }
 
+  function renameConfirmHtml() {
+    const session = state.renameConfirmSession;
+    if (!session) return "";
+    return (
+      '<div class="help-overlay" data-action="cancelRename" data-overlay="rename">' +
+      '<section class="glass help-dialog completion-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">' +
+      '<div class="help-dialog-head"><div><p class="small faint">RENAME SESSION</p>' +
+      '<h2 class="display" id="rename-title">Rename this session</h2></div></div>' +
+      '<label class="completion-warning label" for="rename-project-name">Session name' +
+      '<input class="field" id="rename-project-name" data-model="renameProjectName" type="text" maxlength="120" ' +
+      'value="' + esc(state.renameProjectName) + '" required></label>' +
+      (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
+      '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelRename" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
+      '<button class="btn btn-primary" type="button" data-action="confirmRename" ' +
+      (state.busy || !state.renameProjectName.trim() ? "disabled" : "") + ">" +
+      (state.busy ? "Saving..." : "Save") + "</button></div>" +
+      "</section></div>"
+    );
+  }
+
   function pageHtml() {
     const sel = selectedSession();
     let body = "";
@@ -840,6 +874,7 @@
       (state.helpOpen ? helpGuideHtml() : "") +
       (state.completeConfirmOpen ? completeConfirmHtml() : "") +
       (state.deleteConfirmSession ? deleteConfirmHtml() : "") +
+      (state.renameConfirmSession ? renameConfirmHtml() : "") +
       "</main></div>"
     );
   }
@@ -973,6 +1008,7 @@
     });
     if (!session) return;
     clearMessages();
+    state.openSessionMenuId = null;
     state.deleteConfirmSession = session;
     render();
   }
@@ -1009,6 +1045,62 @@
       }
 
       state.notice = "Session deleted successfully.";
+    } catch (error) {
+      state.error = error.message;
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
+  function requestRenameSession(id) {
+    const session = state.sessions.find(function (item) {
+      return item.session_id === id;
+    });
+    if (!session || state.busy || isCompleted(session)) return;
+    clearMessages();
+    state.openSessionMenuId = null;
+    state.renameConfirmSession = session;
+    state.renameProjectName = session.project_name;
+    state.focusId = "rename-project-name";
+    render();
+  }
+
+  async function renameSession() {
+    const session = state.renameConfirmSession;
+    if (!session || state.busy) return;
+    const id = session.session_id;
+    const projectName = state.renameProjectName.trim();
+    if (!projectName || projectName.length > 120) {
+      state.error = "Project name must be 1-120 characters.";
+      render();
+      return;
+    }
+    if (projectName === session.project_name) {
+      state.renameConfirmSession = null;
+      state.renameProjectName = "";
+      render();
+      return;
+    }
+
+    state.busy = true;
+    clearMessages();
+    render();
+    try {
+      const result = await api("/sessions/" + id, {
+        method: "PATCH",
+        body: JSON.stringify({ project_name: projectName }),
+      });
+      state.sessions = state.sessions.map(function (item) {
+        return item.session_id === id
+          ? Object.assign({}, item, { project_name: result.project_name })
+          : item;
+      });
+      state.renameConfirmSession = null;
+      if (state.report && state.report.session_id === id) {
+        state.report.project_name = result.project_name;
+      }
+      state.notice = "Session renamed successfully.";
     } catch (error) {
       state.error = error.message;
     } finally {
@@ -1323,6 +1415,14 @@
     deleteSession: function (data) {
       requestDeleteSession(Number(data.id));
     },
+    renameSession: function (data) {
+      requestRenameSession(Number(data.id));
+    },
+    toggleSessionMenu: function (data) {
+      const id = Number(data.id);
+      state.openSessionMenuId = state.openSessionMenuId === id ? null : id;
+      render();
+    },
     confirmDelete: function () {
       deleteSession();
     },
@@ -1330,6 +1430,16 @@
       if (state.busy) return;
       state.deleteConfirmSession = null;
       render();
+    },
+    cancelRename: function () {
+      if (state.busy) return;
+      state.renameConfirmSession = null;
+      state.renameProjectName = "";
+      clearMessages();
+      render();
+    },
+    confirmRename: function () {
+      renameSession();
     },
 
     newSession: function () {
@@ -1459,6 +1569,11 @@
       const list = $("#session-list");
       if (list) list.innerHTML = sessionListHtml();
     },
+    renameProjectName: function (v) {
+      state.renameProjectName = v;
+      const button = $('[data-action="confirmRename"]');
+      if (button) button.disabled = state.busy || !v.trim();
+    },
     requirementText: function (v) {
       state.requirementText = v;
       const count = $("#req-count");
@@ -1484,8 +1599,13 @@
 
   app.addEventListener("click", function (event) {
     const el = event.target.closest("[data-action]");
+    const clickedSessionMenu = event.target.closest(".session-menu, .session-menu-toggle");
+    if (state.openSessionMenuId !== null && !clickedSessionMenu) {
+      state.openSessionMenuId = null;
+      if (!el) render();
+    }
     if (!el || el.disabled) return;
-    if (el.dataset.overlay === "delete" && event.target !== el) return;
+    if ((el.dataset.overlay === "delete" || el.dataset.overlay === "rename") && event.target !== el) return;
     const handler = actions[el.dataset.action];
     if (handler) handler(el.dataset);
   });
