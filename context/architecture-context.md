@@ -7,9 +7,9 @@ See `docs/diagram_architecture.svg` for the rendered layered architecture.
    browser SDK manages sign-in and sends bearer tokens with protected API
    requests. FastAPI serves the frontend from the same origin.
 2. **API / application:** FastAPI routes in `backend/app/main.py` handle
-   sessions, discovery, requirement analysis and translation, review,
-   reporting, and DOCX export. `auth.py` verifies Supabase tokens and enforces
-   local user and project ownership.
+   projects, sessions, discovery, requirement analysis and translation,
+   review, reporting, and DOCX export. `auth.py` verifies Supabase tokens and
+   enforces local user and project ownership.
 3. **Domain / processing:** The rule-based detector (lexicon and spaCy POS)
    and AI ambiguity detector run on submitted requirements. The application
    merges detections, manages clarification answers, translates requirements,
@@ -49,8 +49,14 @@ not part of the production request path.
 6. Response returns the translated text and confidence score.
 
 ## Session, review, and report requests
-- `/sessions` creates and lists only the authenticated user's sessions.
-- `POST /sessions/{id}/discovery` saves the project's discovery answers.
+- `/projects` lists and creates projects for the authenticated user;
+  `/projects/{id}/sessions` creates sessions within a project.
+- A project can contain multiple sessions. Each session has an optional name,
+  a saved start date/time, and its own requirements and report. Discovery
+  questions are asked in the first session only; later sessions inherit its
+  answers.
+- `GET` and `POST /sessions/{id}/discovery` load and save project discovery
+  answers through the first session; later sessions reuse the inherited data.
 - `/sessions/{id}/report` supplies translated requirements for review and the
   final report; requirement edit and approve routes persist review decisions.
 - `/sessions/{id}/report/docx` returns the authenticated Word export.
@@ -66,7 +72,10 @@ actually answered.
 See docs/diagram_erd.png and docs/ClearReq_AI_Planning_Document.docx
 section 5 for the full entity-relationship diagram. Key point: schema is
 versioned — a Requirement can have multiple RequirementVersions over time,
-so re-translating never destroys history.
+so re-translating never destroys history. Projects own multiple sessions, and
+session names are optional; `started_at` provides the date/time label when a
+session is unnamed. Project discovery is stored on the first session and
+copied to subsequent sessions.
 
 ## Deliberate scope decisions (don't "fix" these without asking)
 - SQLite is the default local database; PostgreSQL is supported through

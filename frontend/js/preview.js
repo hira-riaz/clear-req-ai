@@ -13,11 +13,16 @@
   var enabled = local && new URLSearchParams(window.location.search).has("preview");
 
   var db = {
+    nextProject: 3,
     nextSession: 3,
     nextReq: 1,
+    projects: [
+      { project_id: 1, project_name: "Hospital Management System", client_name: null },
+      { project_id: 2, project_name: "Online Store", client_name: null },
+    ],
     sessions: [
-      { session_id: 1, project_name: "Hospital Management System", discovery: [], status: "active" },
-      { session_id: 2, project_name: "Online Store", discovery: [], status: "active" },
+      { session_id: 1, project_id: 1, session_name: null, discovery_required: true, started_at: new Date().toISOString(), discovery: [], status: "active" },
+      { session_id: 2, project_id: 2, session_name: null, discovery_required: true, started_at: new Date().toISOString(), discovery: [], status: "active" },
     ],
     requirements: [],
   };
@@ -90,14 +95,20 @@
   }
 
   function summary(s) {
+    var project = db.projects.find(function (item) {
+      return item.project_id === s.project_id;
+    });
     var mine = db.requirements.filter(function (r) {
       return r.session_id === s.session_id;
     });
     return {
       session_id: s.session_id,
-      project_name: s.project_name,
-      client_name: s.client_name || null,
-      started_at: s.started_at || null,
+      project_id: s.project_id,
+      project_name: project.project_name,
+      client_name: project.client_name || null,
+      session_name: s.session_name || null,
+      discovery_required: s.discovery_required !== false,
+      started_at: s.started_at,
       ended_at: s.ended_at || null,
       status: s.status || (s.ended_at ? "completed" : "active"),
       requirement_count: mine.length,
@@ -117,34 +128,128 @@
     var body = options.body ? JSON.parse(options.body) : {};
     var m;
 
+    if (path === "/projects" && method === "GET") {
+      return db.projects.map(function (project) {
+        return {
+          project_id: project.project_id,
+          project_name: project.project_name,
+          client_name: project.client_name,
+          created_at: project.created_at || new Date().toISOString(),
+          session_count: db.sessions.filter(function (s) {
+            return s.project_id === project.project_id;
+          }).length,
+        };
+      });
+    }
+
+    if (path === "/projects" && method === "POST") {
+      var newProject = {
+        project_id: db.nextProject++,
+        project_name: body.project_name,
+        client_name: body.client_name || null,
+        created_at: new Date().toISOString(),
+      };
+      db.projects.unshift(newProject);
+      return {
+        project_id: newProject.project_id,
+        project_name: newProject.project_name,
+        client_name: newProject.client_name,
+        created_at: newProject.created_at,
+        session_count: 0,
+      };
+    }
+
+    m = path.match(/^\/projects\/(\d+)\/sessions$/);
+    if (m && method === "POST") {
+      var projectForSession = db.projects.find(function (project) {
+        return project.project_id === Number(m[1]);
+      });
+      if (!projectForSession) throw new Error("Project not found");
+      var firstProjectSession = db.sessions.filter(function (session) {
+        return session.project_id === projectForSession.project_id;
+      }).sort(function (a, b) {
+        return a.session_id - b.session_id;
+      })[0];
+      var projectSession = {
+        session_id: db.nextSession++,
+        project_id: projectForSession.project_id,
+        session_name: body.session_name || null,
+        discovery_required: !firstProjectSession,
+        started_at: new Date().toISOString(),
+        status: "active",
+        discovery: firstProjectSession ? (firstProjectSession.discovery || []).map(function (answer) {
+          return Object.assign({}, answer);
+        }) : [],
+      };
+      db.sessions.unshift(projectSession);
+      return Object.assign({}, summary(projectSession), {
+        discovery_answers: projectSession.discovery,
+        requirement_count: 0,
+        translated_count: 0,
+        approved_count: 0,
+      });
+    }
+
+    m = path.match(/^\/projects\/(\d+)$/);
+    if (m && method === "PATCH") {
+      var editingProject = db.projects.find(function (project) {
+        return project.project_id === Number(m[1]);
+      });
+      if (!editingProject) throw new Error("Project not found");
+      editingProject.project_name = body.project_name;
+      return { project_id: editingProject.project_id, project_name: editingProject.project_name };
+    }
+
+    if (m && method === "DELETE") {
+      var deletingProjectId = Number(m[1]);
+      var projectIndex = db.projects.findIndex(function (project) {
+        return project.project_id === deletingProjectId;
+      });
+      if (projectIndex < 0) throw new Error("Project not found");
+      var deletedSessionIds = db.sessions.filter(function (session) {
+        return session.project_id === deletingProjectId;
+      }).map(function (session) { return session.session_id; });
+      db.projects.splice(projectIndex, 1);
+      db.sessions = db.sessions.filter(function (session) {
+        return session.project_id !== deletingProjectId;
+      });
+      db.requirements = db.requirements.filter(function (requirement) {
+        return deletedSessionIds.indexOf(requirement.session_id) < 0;
+      });
+      return { status: "deleted" };
+    }
+
     if (path === "/sessions" && method === "GET") return db.sessions.map(summary);
 
     if (path === "/sessions" && method === "POST") {
       var s = {
         session_id: db.nextSession++,
-        project_name: body.project_name,
-        client_name: body.client_name || null,
+        project_id: db.nextProject,
+        session_name: null,
+        discovery_required: true,
         started_at: new Date().toISOString(),
         status: "active",
         discovery: [],
       };
+      db.projects.unshift({
+        project_id: db.nextProject++,
+        project_name: body.project_name,
+        client_name: body.client_name || null,
+      });
       db.sessions.unshift(s);
-      return {
-        session_id: s.session_id,
-        project_name: s.project_name,
-        client_name: s.client_name,
-        started_at: s.started_at,
-        status: s.status,
-      };
+      return summary(s);
     }
 
     m = path.match(/^\/sessions\/(\d+)$/);
     if (m && method === "PATCH") {
-      var renamingSession = ensureActiveSession(m[1]);
-      renamingSession.project_name = body.project_name;
+      var renamingSession = db.sessions.find(function (session) {
+        return session.session_id === Number(m[1]);
+      });
+      if (!renamingSession) throw new Error("Session not found");
+      renamingSession.session_name = body.session_name || null;
       return {
         session_id: renamingSession.session_id,
-        project_name: renamingSession.project_name,
+        session_name: renamingSession.session_name,
       };
     }
 
@@ -154,17 +259,38 @@
         return session.session_id === deletingId;
       });
       if (sessionIndex < 0) throw new Error("Session not found");
-      db.sessions.splice(sessionIndex, 1);
+      var removedSession = db.sessions.splice(sessionIndex, 1)[0];
       db.requirements = db.requirements.filter(function (requirement) {
-        return requirement.session_id !== deletingId;
+        return requirement.session_id !== removedSession.session_id;
       });
       return { status: "deleted" };
     }
 
     m = path.match(/^\/sessions\/(\d+)\/discovery$/);
+    if (m && method === "GET") {
+      var discoverySession = db.sessions.find(function (session) {
+        return session.session_id === Number(m[1]);
+      });
+      if (!discoverySession) throw new Error("Session not found");
+      return {
+        answers: discoverySession.discovery || [],
+        discovery_required: discoverySession.discovery_required !== false,
+      };
+    }
+
     if (m && method === "POST") {
-      ensureActiveSession(m[1]).discovery = body.answers;
-      return { ok: true };
+      var editableDiscoverySession = ensureActiveSession(m[1]);
+      if (editableDiscoverySession.discovery_required === false) {
+        throw new Error("Discovery answers are inherited from the project's first session.");
+      }
+      db.sessions.filter(function (session) {
+        return session.project_id === editableDiscoverySession.project_id;
+      }).forEach(function (session) {
+        session.discovery = body.answers.map(function (answer) {
+          return Object.assign({}, answer);
+        });
+      });
+      return { status: "saved", count: body.answers.length };
     }
 
     m = path.match(/^\/sessions\/(\d+)\/complete$/);
@@ -189,8 +315,10 @@
       });
       return {
         session_id: sess.session_id,
-        project_name: sess.project_name,
-        client_name: sess.client_name || null,
+        project_id: sess.project_id,
+        project_name: db.projects.find(function (project) { return project.project_id === sess.project_id; }).project_name,
+        client_name: db.projects.find(function (project) { return project.project_id === sess.project_id; }).client_name || null,
+        session_name: sess.session_name,
         started_at: sess.started_at || null,
         ended_at: sess.ended_at || null,
         status: sess.status || (sess.ended_at ? "completed" : "active"),

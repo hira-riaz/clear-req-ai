@@ -21,14 +21,19 @@ from fastapi import Body
 
 from . import ai_provider, models, rule_detector
 from .auth import get_current_user
-from .database import engine, get_db, migrate_legacy_user_auth
+from .database import (
+    engine, get_db, migrate_legacy_user_auth, migrate_session_discovery,
+    migrate_session_name,
+)
 from .schemas import (
-    ApproveIn, DiscoverySubmit, RequirementEdit, RequirementIn, SessionIn,
-    TranslateRequest,
+    ApproveIn, DiscoverySubmit, ProjectCreate, ProjectUpdate, RequirementEdit,
+    RequirementIn, SessionCreate, SessionIn, SessionUpdate, TranslateRequest,
 )
 
 models.Base.metadata.create_all(bind=engine)
 migrate_legacy_user_auth()
+migrate_session_name()
+migrate_session_discovery()
 
 app = FastAPI(title="ClearReq AI")
 
@@ -60,6 +65,13 @@ def _owned_session(db: DBSession, session_id: int, user: models.User):
     if not session or not project or project.user_id != user.id:
         raise HTTPException(404, "Session not found")
     return session, project
+
+
+def _owned_project(db: DBSession, project_id: int, user: models.User):
+    project = db.get(models.Project, project_id)
+    if not project or project.user_id != user.id:
+        raise HTTPException(404, "Project not found")
+    return project
 
 
 def _ensure_session_active(session: models.Session) -> None:
@@ -159,7 +171,7 @@ def _find_previous_answer(db: DBSession, session_id: int, exclude_requirement_id
     return row.answer if row else None
 
 
-def _delete_session_cascade(db: DBSession, session: models.Session, project: models.Project) -> None:
+def _delete_session_cascade(db: DBSession, session: models.Session) -> None:
     for req in db.query(models.Requirement).filter(models.Requirement.session_id == session.id).all():
         amb_ids = [i for (i,) in db.query(models.Ambiguity.id).filter(models.Ambiguity.requirement_id == req.id)]
         if amb_ids:
@@ -172,10 +184,33 @@ def _delete_session_cascade(db: DBSession, session: models.Session, project: mod
         db.delete(req)
     db.query(models.DiscoveryAnswer).filter(models.DiscoveryAnswer.session_id == session.id).delete(synchronize_session=False)
     db.delete(session)
-    db.flush()
-    if db.query(models.Session).filter(models.Session.project_id == project.id).count() == 0:
-        db.delete(project)
-    db.commit()
+
+
+def _project_view(project: models.Project, session_count: int) -> dict:
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "client_name": project.client_name,
+        "created_at": project.created_at.isoformat(),
+        "session_count": session_count,
+    }
+
+
+def _session_view(session: models.Session, project: models.Project, stats=(0, 0, 0)) -> dict:
+    return {
+        "session_id": session.id,
+        "project_id": project.id,
+        "project_name": project.name,
+        "client_name": project.client_name,
+        "session_name": session.name,
+        "discovery_required": session.discovery_required,
+        "started_at": session.started_at.isoformat(),
+        "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        "status": "completed" if session.ended_at else "active",
+        "requirement_count": stats[0],
+        "translated_count": stats[1],
+        "approved_count": stats[2],
+    }
 
 
 # ---------- health + auth configuration ----------
@@ -196,13 +231,101 @@ def public_config():
 
 # ---------- sessions (sidebar) ----------
 
+@app.post("/projects")
+def create_project(payload: ProjectCreate, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    project = models.Project(
+        name=payload.project_name,
+        client_name=payload.client_name,
+        user_id=user.id,
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return _project_view(project, 0)
+
+
+@app.get("/projects")
+def list_projects(db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    rows = (
+        db.query(models.Project, func.count(models.Session.id))
+        .outerjoin(models.Session, models.Session.project_id == models.Project.id)
+        .filter(models.Project.user_id == user.id)
+        .group_by(models.Project.id)
+        .order_by(models.Project.created_at.desc())
+        .all()
+    )
+    return [_project_view(project, session_count) for project, session_count in rows]
+
+
+@app.patch("/projects/{project_id}")
+def rename_project(project_id: int, payload: ProjectUpdate, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    project = _owned_project(db, project_id, user)
+    project.name = payload.project_name
+    db.commit()
+    return {"project_id": project.id, "project_name": project.name}
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    project = _owned_project(db, project_id, user)
+    sessions = db.query(models.Session).filter(models.Session.project_id == project.id).all()
+    for session in sessions:
+        _delete_session_cascade(db, session)
+    db.delete(project)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/projects/{project_id}/sessions")
+def create_project_session(project_id: int, payload: SessionCreate, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    project = _owned_project(db, project_id, user)
+    prior_sessions = (
+        db.query(models.Session)
+        .filter(models.Session.project_id == project.id)
+        .order_by(models.Session.id)
+        .all()
+    )
+    discovery_required = not prior_sessions
+    session = models.Session(
+        project_id=project.id,
+        name=payload.session_name,
+        discovery_required=discovery_required,
+    )
+    db.add(session)
+    db.flush()
+    discovery_answers = []
+    if prior_sessions:
+        source_answers = (
+            db.query(models.DiscoveryAnswer)
+            .filter(models.DiscoveryAnswer.session_id == prior_sessions[0].id)
+            .order_by(models.DiscoveryAnswer.id)
+            .all()
+        )
+        discovery_answers = [
+            {"question": answer.question, "answer": answer.answer}
+            for answer in source_answers
+        ]
+        for answer in source_answers:
+            db.add(models.DiscoveryAnswer(
+                session_id=session.id,
+                question=answer.question,
+                answer=answer.answer,
+                answered_at=answer.answered_at,
+            ))
+    db.commit()
+    db.refresh(session)
+    response = _session_view(session, project)
+    response["discovery_answers"] = discovery_answers
+    return response
+
+
 @app.post("/sessions")
 def start_session(payload: SessionIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
     project = models.Project(name=payload.project_name, client_name=payload.client_name, user_id=user.id)
     db.add(project)
     db.commit()
     db.refresh(project)
-    session = models.Session(project_id=project.id)
+    session = models.Session(project_id=project.id, discovery_required=True)
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -211,6 +334,8 @@ def start_session(payload: SessionIn, db: DBSession = Depends(get_db), user: mod
         "project_id": project.id,
         "project_name": project.name,
         "client_name": project.client_name,
+        "discovery_required": session.discovery_required,
+        "discovery_answers": [],
         "started_at": session.started_at.isoformat(),
     }
 
@@ -241,36 +366,23 @@ def list_sessions(db: DBSession = Depends(get_db), user: models.User = Depends(g
             .all()
         ):
             stats[sid] = (int(total), int(finished or 0), int(approved_total or 0))
-    return [
-        {
-            "session_id": s.id,
-            "project_name": p.name,
-            "client_name": p.client_name,
-            "started_at": s.started_at.isoformat(),
-            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-            "status": "completed" if s.ended_at else "active",
-            "requirement_count": stats.get(s.id, (0, 0, 0))[0],
-            "translated_count": stats.get(s.id, (0, 0, 0))[1],
-            "approved_count": stats.get(s.id, (0, 0, 0))[2],
-        }
-        for s, p in rows
-    ]
+    return [_session_view(s, p, stats.get(s.id, (0, 0, 0))) for s, p in rows]
 
 
 @app.patch("/sessions/{session_id}")
-def rename_session(session_id: int, payload: SessionIn, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    session, project = _owned_session(db, session_id, user)
-    _ensure_session_active(session)
-    project.name = payload.project_name
+def rename_session(session_id: int, payload: SessionUpdate, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    session, _ = _owned_session(db, session_id, user)
+    session.name = payload.session_name
     db.commit()
-    return {"session_id": session_id, "project_name": project.name}
+    return {"session_id": session.id, "session_name": session.name}
 
 
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    session, project = _owned_session(db, session_id, user)
+    session, _ = _owned_session(db, session_id, user)
     _ensure_session_active(session)
-    _delete_session_cascade(db, session, project)
+    _delete_session_cascade(db, session)
+    db.commit()
     return {"status": "deleted"}
 
 
@@ -290,12 +402,36 @@ def complete_session(session_id: int, db: DBSession = Depends(get_db), user: mod
 
 @app.post("/sessions/{session_id}/discovery")
 def submit_discovery(session_id: int, payload: DiscoverySubmit, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
-    session, _ = _owned_session(db, session_id, user)
+    session, project = _owned_session(db, session_id, user)
     _ensure_session_active(session)
-    for item in payload.answers:
-        db.add(models.DiscoveryAnswer(session_id=session_id, question=item.question, answer=item.answer))
+    if not session.discovery_required:
+        raise HTTPException(409, "Discovery answers are inherited from the project's first session.")
+    sessions = db.query(models.Session.id).filter(
+        models.Session.project_id == project.id,
+        models.Session.discovery_required.is_(False),
+    ).all()
+    session_ids = [session_id] + [sid for (sid,) in sessions]
+    for target_session_id in session_ids:
+        db.query(models.DiscoveryAnswer).filter(
+            models.DiscoveryAnswer.session_id == target_session_id
+        ).delete(synchronize_session=False)
+        for item in payload.answers:
+            db.add(models.DiscoveryAnswer(
+                session_id=target_session_id,
+                question=item.question,
+                answer=item.answer,
+            ))
     db.commit()
     return {"status": "saved", "count": len(payload.answers)}
+
+
+@app.get("/sessions/{session_id}/discovery")
+def get_session_discovery(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
+    session, _ = _owned_session(db, session_id, user)
+    return {
+        "answers": _project_discovery_items(db, session),
+        "discovery_required": session.discovery_required,
+    }
 
 
 # ---------- requirements ----------
@@ -386,10 +522,7 @@ def translate_requirement(payload: TranslateRequest, db: DBSession = Depends(get
         latest = _latest_version(db, other.id)
         if latest:
             context_texts.append(latest.translated_text)
-    discovery = [
-        {"question": d.question, "answer": d.answer}
-        for d in db.query(models.DiscoveryAnswer).filter(models.DiscoveryAnswer.session_id == session.id).all()
-    ]
+    discovery = _project_discovery_items(db, session)
 
     result = ai_provider.translate_and_verify(requirement.original_text, clarifications, context_texts, discovery)
 
@@ -472,17 +605,41 @@ def _discovery_items(db: DBSession, session_id: int) -> list[dict]:
     return [{"question": answer.question, "answer": answer.answer} for answer in answers]
 
 
+def _project_discovery_items(db: DBSession, session: models.Session) -> list[dict]:
+    source = session
+    if not session.discovery_required:
+        source = (
+            db.query(models.Session)
+            .filter(
+                models.Session.project_id == session.project_id,
+                models.Session.discovery_required.is_(True),
+            )
+            .order_by(models.Session.id)
+            .first()
+        )
+        if source is None:
+            source = (
+                db.query(models.Session)
+                .filter(models.Session.project_id == session.project_id)
+                .order_by(models.Session.id)
+                .first()
+            )
+    return _discovery_items(db, source.id) if source else []
+
+
 @app.get("/sessions/{session_id}/report")
 def get_session_report(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
     session, project = _owned_session(db, session_id, user)
     return {
         "session_id": session_id,
+        "project_id": project.id,
         "project_name": project.name,
         "client_name": project.client_name,
+        "session_name": session.name,
         "started_at": session.started_at.isoformat(),
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
         "status": "completed" if session.ended_at else "active",
-        "discovery": _discovery_items(db, session_id),
+        "discovery": _project_discovery_items(db, session),
         "requirements": _report_items(db, session_id),
     }
 
@@ -490,7 +647,7 @@ def get_session_report(session_id: int, db: DBSession = Depends(get_db), user: m
 @app.get("/sessions/{session_id}/report/docx")
 def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user: models.User = Depends(get_current_user)):
     session, project = _owned_session(db, session_id, user)
-    discovery = _discovery_items(db, session_id)
+    discovery = _project_discovery_items(db, session)
     items = _report_items(db, session_id)
     original_requirements = (
         db.query(models.Requirement)
@@ -501,6 +658,8 @@ def download_report_docx(session_id: int, db: DBSession = Depends(get_db), user:
 
     doc = Document()
     doc.add_heading(f"{project.name} — Requirements", level=1)
+    if session.name:
+        doc.add_heading(session.name, level=2)
     if project.client_name:
         doc.add_paragraph(f"Client: {project.client_name}")
     doc.add_paragraph(f"Date: {session.started_at.day} {session.started_at.strftime('%B %Y')}")

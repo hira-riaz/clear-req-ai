@@ -35,6 +35,56 @@ class SessionIn(BaseModel):
         return None if v is None else _reject_html_like(v.strip(), "Client name")
 
 
+class ProjectCreate(BaseModel):
+    project_name: str
+    client_name: str | None = None
+
+    @field_validator("project_name")
+    @classmethod
+    def v_project(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 120:
+            raise ValueError("Project name must be 1-120 characters")
+        return _reject_html_like(v, "Project name")
+
+    @field_validator("client_name")
+    @classmethod
+    def v_client(cls, v: str | None) -> str | None:
+        return None if v is None else _reject_html_like(v.strip(), "Client name")
+
+
+class ProjectUpdate(BaseModel):
+    project_name: str
+
+    @field_validator("project_name")
+    @classmethod
+    def v_project(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 120:
+            raise ValueError("Project name must be 1-120 characters")
+        return _reject_html_like(v, "Project name")
+
+
+class SessionCreate(BaseModel):
+    session_name: str | None = None
+
+    @field_validator("session_name")
+    @classmethod
+    def v_session_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 120:
+            raise ValueError("Session name must be at most 120 characters")
+        return _reject_html_like(v, "Session name")
+
+
+class SessionUpdate(SessionCreate):
+    pass
+
+
 class RequirementIn(BaseModel):
     session_id: int
     text: str

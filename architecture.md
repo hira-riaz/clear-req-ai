@@ -86,16 +86,16 @@ This is the logic that turns raw requirement text into clarified and translated 
 
 1. The user signs in through Supabase Auth in the browser.
 2. The frontend requests `/public-config` for the Supabase project URL and anon key.
-3. The frontend calls `/sessions` with project metadata.
-4. The backend creates a `Project` and a `Session` owned by the authenticated user.
+3. The frontend creates a project with `/projects`, then starts its first session with `/projects/{project_id}/sessions`.
+4. The backend requires project discovery only for the first session; later sessions inherit the first session's saved answers.
 5. The session appears in the sidebar and becomes the working context for all further requirement processing.
 
 ### 3.2 Discovery flow
 
-1. The UI gathers project discovery answers from a predefined set of questions.
+1. The UI gathers project discovery answers from a predefined set of questions during the project's first session only.
 2. The frontend submits them to `/sessions/{session_id}/discovery`.
-3. The backend stores each response as `DiscoveryAnswer` records associated with the session.
-4. The stored answers are later used as project-context input for requirement translation.
+3. The backend stores the answers on the first session and copies updates to the project's later sessions.
+4. Later sessions skip discovery and reuse the inherited answers as context for translation and reports.
 
 ### 3.3 Analysis flow
 
@@ -152,12 +152,13 @@ The core data model is designed around versioned requirements and per-user proje
   - Stores name and email
 
 - `Project`
-  - Represents a client project or work item
-  - Owned by one user
+  - Represents a client project or work item, with an optional client name
+  - Owned by one user and may contain multiple sessions
 
 - `Session`
   - Represents a working session within a project
-  - Holds requirement records and discovery answers
+  - Has an optional name and a saved start date/time
+  - Holds its own requirement records and inherits project discovery answers from the first session
   - Can be completed and made read-only
 
 - `Requirement`

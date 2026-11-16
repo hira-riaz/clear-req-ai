@@ -59,22 +59,30 @@
   function freshWorkspace() {
     return {
       workspaceReady: false,
+      projects: [],
       sessions: [],
       selectedId: null,
+      expandedProjects: {},
       search: "",
       loadingSessions: true,
       workflow: "dashboard",
       projectName: "",
       clientName: "",
+      sessionName: "",
       creating: false,
+      createProjectOpen: false,
       busy: false,
       error: "",
       notice: "",
       helpOpen: false,
       completeConfirmOpen: false,
       deleteConfirmSession: null,
+      deleteConfirmProject: null,
       renameConfirmSession: null,
+      renameConfirmProject: null,
       renameProjectName: "",
+      createSessionProjectId: null,
+      openProjectMenuId: null,
       openSessionMenuId: null,
       sidebarOpen: true,
       sidebarWidth: 256,
@@ -261,6 +269,17 @@
     return Boolean(session && (session.status === "completed" || session.ended_at));
   }
 
+  function formatSessionDateTime(startedAt) {
+    if (!startedAt) return "Date and time unavailable";
+    const isoTimestamp = /(?:Z|[+-]\d{2}:\d{2})$/i.test(startedAt)
+      ? startedAt
+      : startedAt + "Z";
+    const date = new Date(isoTimestamp);
+    return Number.isNaN(date.getTime())
+      ? "Date and time unavailable"
+      : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
+  }
+
   function clearMessages() {
     state.error = "";
     state.notice = "";
@@ -401,71 +420,90 @@
 
   function sessionListHtml() {
     const query = state.search.trim().toLowerCase();
-  
-    const list = state.sessions.filter(function (s) {
-      return s.project_name.toLowerCase().indexOf(query) >= 0;
-    });
-  
+
     if (state.loadingSessions) {
       return '<p class="session-note">Loading sessions...</p>';
     }
-  
-    if (!list.length) {
+
+    const visibleProjects = state.projects.filter(function (project) {
+      return !query || project.project_name.toLowerCase().indexOf(query) >= 0 ||
+        state.sessions.some(function (session) {
+          return session.project_id === project.project_id &&
+            (session.session_name || "").toLowerCase().indexOf(query) >= 0;
+        });
+    });
+
+    if (!visibleProjects.length) {
       return '<p class="session-note">' +
         (state.search
-          ? "No sessions match your search."
-          : "Your new projects will show up here.") +
+          ? "No projects match your search."
+          : "Create a project to get started.") +
         "</p>";
     }
-  
-    return list
-      .map(function (s) {
-        const selected = s.session_id === state.selectedId;
-  
-        return (
-          '<div class="session-row' +
-          (state.openSessionMenuId === s.session_id ? " menu-open" : "") +
-          '" data-session-id="' + s.session_id + '">' +
-  
-          '<button type="button" class="session-item' +
-          (selected ? " selected" : "") + '"' +
-          (selected ? ' aria-current="true"' : "") +
-          ' data-action="openSession" data-id="' +
-          s.session_id +
-          '">' +
-  
-          '<span class="name">' + esc(s.project_name) + "</span>" +
-  
-          '<span class="meta">' +
-          plural(s.requirement_count, "requirement") +
-          (s.translated_count
-            ? ", " + s.translated_count + " translated"
-            : "") +
-          (isCompleted(s) ? " · Completed" : "") +
-          "</span>" +
-  
-          "</button>" +
 
-          '<button class="session-menu-toggle" type="button" ' +
-          'data-action="toggleSessionMenu" data-id="' + s.session_id + '" ' +
-          'aria-label="Session options for ' + esc(s.project_name) + '" ' +
-          'aria-haspopup="menu" aria-expanded="' + (state.openSessionMenuId === s.session_id) + '">' +
-          icon("more") +
-          "</button>" +
+    return visibleProjects.map(function (project) {
+      const projectId = project.project_id;
+      const sessions = state.sessions.filter(function (session) {
+        return session.project_id === projectId &&
+          (!query || project.project_name.toLowerCase().indexOf(query) >= 0 ||
+            (session.session_name || "").toLowerCase().indexOf(query) >= 0);
+      });
+      const expanded = state.expandedProjects[projectId] !== false || Boolean(query);
+      return (
+        '<section class="project-group">' +
+        '<div class="project-row' + (state.openProjectMenuId === projectId ? " menu-open" : "") + '">' +
+        '<button type="button" class="project-toggle" data-action="toggleProject" data-id="' + projectId + '" aria-expanded="' + expanded + '">' +
+        '<span class="project-caret">' + (expanded ? "⌄" : "›") + "</span>" +
+        '<span class="project-heading"><span class="name">' + esc(project.project_name) + '</span>' +
+        '<span class="meta">' + (project.client_name ? esc(project.client_name) + " · " : "") +
+        plural(sessions.length, "session") + "</span></span></button>" +
+        '<button class="project-add-session" type="button" data-action="createProjectSession" data-id="' + projectId + '" aria-label="Create session in ' + esc(project.project_name) + '" title="New session">+</button>' +
+        '<button class="project-menu-toggle" type="button" data-action="toggleProjectMenu" data-id="' + projectId + '" aria-label="Project options for ' + esc(project.project_name) + '" aria-haspopup="menu" aria-expanded="' + (state.openProjectMenuId === projectId) + '">' + icon("more") + "</button>" +
+        (state.openProjectMenuId === projectId
+          ? '<div class="project-menu" role="menu">' +
+            '<button type="button" role="menuitem" data-action="renameProject" data-id="' + projectId + '">Rename project</button>' +
+            '<button type="button" role="menuitem" data-action="deleteProject" data-id="' + projectId + '">Delete project</button></div>'
+          : "") +
+        "</div>" +
+        (expanded
+          ? '<div class="project-sessions">' +
+            (sessions.length
+              ? sessions.map(sessionItemHtml).join("")
+              : '<p class="session-note project-empty">No sessions yet. Select + to start one.</p>') +
+            "</div>"
+          : "") +
+        "</section>"
+      );
+    }).join("");
+  }
 
-          (state.openSessionMenuId === s.session_id
-            ? '<div class="session-menu" role="menu">' +
-              '<button type="button" role="menuitem" data-action="renameSession" data-id="' + s.session_id + '"' +
-              (isCompleted(s) || state.busy ? " disabled" : "") + ">Rename</button>" +
-              '<button type="button" role="menuitem" data-action="deleteSession" data-id="' + s.session_id + '"' +
-              (state.busy ? " disabled" : "") + ">Delete</button>" +
-              "</div>"
-            : "") +
-  
-          "</div>"
-        );
-      })
-      .join("");
+  function sessionItemHtml(s) {
+    const selected = s.session_id === state.selectedId;
+    const label = s.session_name || "Session · " + formatSessionDateTime(s.started_at);
+    return (
+      '<div class="session-row' +
+      (state.openSessionMenuId === s.session_id ? " menu-open" : "") +
+      '" data-session-id="' + s.session_id + '">' +
+      '<button type="button" class="session-item' + (selected ? " selected" : "") + '"' +
+      (selected ? ' aria-current="true"' : "") +
+      ' data-action="openSession" data-id="' + s.session_id + '">' +
+      '<span class="name">' + esc(label) + "</span>" +
+      '<span class="meta">' + (s.session_name ? formatSessionDateTime(s.started_at) + " · " : "") +
+      plural(s.requirement_count, "requirement") +
+      (s.translated_count ? ", " + s.translated_count + " translated" : "") +
+      (isCompleted(s) ? " · Completed" : "") + "</span></button>" +
+      '<button class="session-menu-toggle" type="button" data-action="toggleSessionMenu" data-id="' + s.session_id + '"' +
+      ' aria-label="Session options for ' + esc(label) + '" aria-haspopup="menu" aria-expanded="' + (state.openSessionMenuId === s.session_id) + '">' +
+      icon("more") + "</button>" +
+      (state.openSessionMenuId === s.session_id
+        ? '<div class="session-menu" role="menu">' +
+          '<button type="button" role="menuitem" data-action="renameSession" data-id="' + s.session_id + '"' +
+          (state.busy ? " disabled" : "") + ">Rename session</button>" +
+          '<button type="button" role="menuitem" data-action="deleteSession" data-id="' + s.session_id + '"' +
+          (state.busy ? " disabled" : "") + ">Delete session</button></div>"
+        : "") +
+      "</div>"
+    );
   }
 
   function sidebarHtml() {
@@ -474,7 +512,7 @@
     return (
       '<aside class="sidebar">' + brand(false) +
       '<nav class="nav" aria-label="Workspace">' +
-      '<button class="nav-item" type="button" data-action="newSession">' + icon("plus") + "New session</button>" +
+      '<button class="nav-item" type="button" data-action="newProject">' + icon("plus") + "New project</button>" +
       '<div class="nav-item nav-search">' + icon("search") +
       '<label class="sr-only" for="session-search">Search sessions</label>' +
       '<input id="session-search" data-model="search" placeholder="Search" autocomplete="off" value="' + esc(state.search) + '"></div>' +
@@ -483,7 +521,7 @@
       '<button class="nav-item' + (onHome ? " active" : "") + '" type="button" data-action="home"' + (onHome ? ' aria-current="page"' : "") + ">" + icon("home") + "Home</button>" +
       '<button class="nav-item' + (onReport ? " active" : "") + '" type="button" data-action="reports"' + (state.busy ? " disabled" : "") + (onReport ? ' aria-current="page"' : "") + ">" + icon("file") + "Reports</button>" +
       "</nav><hr>" +
-      '<p class="side-label">Recent projects</p>' +
+      '<p class="side-label">Projects</p>' +
       '<div class="session-list" id="session-list">' + sessionListHtml() + "</div>" +
       '<div class="profile"><span class="avatar">' + esc(firstName().charAt(0).toUpperCase()) + "</span>" +
       '<div class="who"><p class="name">' + esc(displayName()) + '</p><p class="email">' + esc(state.user.email) + "</p></div>" +
@@ -519,7 +557,7 @@
 
   function dashboardHtml() {
     const sel = selectedSession();
-    const count = state.sessions.length;
+    const count = state.projects.length;
     const requirementCount = sel ? sel.requirement_count : 0;
     const approvedCount = sel ? sel.approved_count : 0;
     const progress = requirementCount
@@ -536,25 +574,23 @@
       '<div class="dash">' +
       '<div class="status-pill"><p class="glass">' +
       (count ? plural(count, "project") : "No projects yet") +
-      '<button type="button" data-action="newSession">Start new</button></p></div>' +
+      '<button type="button" data-action="newProject">New project</button></p></div>' +
       '<h1 class="display greeting">' + greeting() + ", " + esc(firstName()) + "</h1>" +
-      '<div class="gap">' + messagesHtml() + "</div>" +
+      '<div class="gap">' + (state.createProjectOpen ? "" : messagesHtml()) + "</div>" +
       (sel
-        ? '<section class="glass selected-project"><div class="top"><div><p class="small faint">Selected project</p><h2 class="display">' + esc(sel.project_name) + "</h2></div>" +
+        ? '<section class="glass selected-project"><div class="top"><div><p class="small faint">Selected project · ' + esc(sel.session_name || formatSessionDateTime(sel.started_at)) + '</p><h2 class="display">' + esc(sel.project_name) + "</h2>" +
+          (sel.session_name ? '<p class="small muted">' + formatSessionDateTime(sel.started_at) + "</p>" : "") +
+          (sel.client_name ? '<p class="small muted">Client: ' + esc(sel.client_name) + "</p>" : "") + "</div>" +
           '<div class="stats"><p><strong>' + requirementCount + '</strong><span class="small muted">Requirements</span></p>' +
           '<p><strong>' + approvedCount + '</strong><span class="small muted">Approved</span></p>' +
           '<p><strong>' + progress + '%</strong><span class="small muted">' + status + "</span></p></div></div>" +
           '<div class="buttons">' +
-          (isCompleted(sel) ? "" : '<button class="btn btn-primary" type="button" data-action="continueSession">Continue session</button>') +
+          (isCompleted(sel) ? "" : '<button class="btn btn-primary" type="button" data-action="continueSession"' +
+            (state.busy ? " disabled" : "") + ">" + (state.busy ? "Loading..." : "Continue session") + "</button>") +
           '<button class="btn btn-ghost" type="button" data-action="showReport"' + (state.busy ? " disabled" : "") + ">View report</button></div></section>"
-        : '<form class="glass prompt" data-form="createSession">' +
-      '<label class="sr-only" for="project-name">Project name</label>' +
-      '<input id="project-name" data-model="projectName" maxlength="120" required autocomplete="off" placeholder="Name a project to start gathering requirements" value="' + esc(state.projectName) + '">' +
-        '<label class="sr-only" for="client-name">Client name (optional)</label>' +
-        '<input id="client-name" class="client-name" data-model="clientName" autocomplete="organization" placeholder="Client name (optional)" value="' + esc(state.clientName) + '">' +
-        '<div class="row"><p class="small faint">Starts a guided session: discovery, analysis, clarification, report.</p>' +
-      '<button class="send" id="start-btn" type="submit" title="Start session" aria-label="Start session"' +
-      (state.creating || !state.projectName.trim() ? " disabled" : "") + ">" + icon("arrowUp") + "</button></div></form>" +
+        : '<section class="glass card project-intro"><p class="small faint">GET STARTED</p><h2 class="display">Organize work by project</h2>' +
+          '<p class="muted">Create a project once, then add separate sessions for meetings, requirement rounds, or later iterations. Project discovery is answered in the first session; each session keeps its own requirements and report.</p>' +
+          '<button class="btn btn-primary" type="button" data-action="newProject">Create a project</button></section>' +
       '<p class="quick-label">Quick start</p><div class="quick-grid">' +
       starters
         .map(function (s, i) {
@@ -692,6 +728,7 @@
     const completed = isCompleted(report) || isCompleted(selectedSession());
     return (
       '<section class="glass card report"><div class="report-head"><h2 class="display">' + esc(report.project_name) + " requirements</h2>" +
+      (report.session_name ? '<p class="report-client">Session: ' + esc(report.session_name) + "</p>" : "") +
       (completed ? '<p class="pill pill-green" style="display:inline-flex;margin-top:10px">Completed · read-only</p>' : "") +
       '<p class="muted" style="margin-top:8px">' + plural(report.requirements.length, "requirement") + "</p>" +
       (report.client_name ? '<p class="report-client">Client: ' + esc(report.client_name) + "</p>" : "") +
@@ -747,28 +784,42 @@
   }
 
   function reportsHtml() {
-    const reports = state.sessions.filter(function (session) {
-      return session.translated_count > 0 && session.approved_count > 0;
+    const reportGroups = state.projects.map(function (project) {
+      return {
+        project: project,
+        sessions: state.sessions.filter(function (session) {
+          return session.project_id === project.project_id;
+        }),
+      };
+    }).filter(function (group) {
+      return group.sessions.length > 0;
     });
 
-    if (!reports.length) {
-      return '<section class="glass card"><p class="muted">No reports are available yet. Reports appear here after a session has reviewed requirements and at least one approved requirement.</p></section>';
+    if (!reportGroups.length) {
+      return '<section class="glass card"><p class="muted">No session reports are available yet. Create a session in a project to see its report here.</p></section>';
     }
 
     return (
-      '<section class="glass card"><h2 class="display">Reviewed reports</h2>' +
-      reports
-        .map(function (session) {
-          return (
-            '<article class="glass selected-project"><div class="top"><div>' +
-            '<h2 class="display">' + esc(session.project_name) + "</h2>" +
-            '<p class="small muted">' + plural(session.translated_count, "reviewed requirement") +
-            ", " + plural(session.approved_count, "approved requirement") + "</p></div>" +
-            '<button class="btn btn-primary" type="button" data-action="openReport" data-id="' +
-            session.session_id + '">View report</button></div></article>'
-          );
-        })
-        .join("") +
+      '<section class="glass card"><h2 class="display">Session reports by project</h2>' +
+      reportGroups.map(function (group) {
+        return (
+          '<div class="report-project-group"><div class="row-between report-project-head">' +
+          '<h3 class="display">' + esc(group.project.project_name) + "</h3>" +
+          '<span class="small muted">' + plural(group.sessions.length, "session report") + "</span></div>" +
+          group.sessions.map(function (session) {
+            return (
+              '<article class="glass selected-project report-session-card"><div class="top"><div>' +
+              '<h4 class="display">' + esc(session.session_name || "Session") + "</h4>" +
+              '<p class="small muted">' + formatSessionDateTime(session.started_at) + "</p>" +
+              '<p class="small muted">' + plural(session.translated_count, "reviewed requirement") +
+              ", " + plural(session.approved_count, "approved requirement") + "</p></div>" +
+              '<button class="btn btn-primary" type="button" data-action="openReport" data-id="' +
+              session.session_id + '">View report</button></div></article>'
+            );
+          }).join("") +
+          "</div>"
+        );
+      }).join("") +
       "</section>"
     );
   }
@@ -781,11 +832,11 @@
       '<h2 class="display" id="help-title">How to use ClearReq</h2></div>' +
       '<button class="icon-btn help-close" type="button" data-action="closeHelp" aria-label="Close guide">×</button></div>' +
       '<ol class="help-steps">' +
-      '<li><span>1</span><div><h3>Create a session</h3><p>Start a new session and give your project a name.</p></div></li>' +
-      '<li><span>2</span><div><h3>Complete discovery</h3><p>Answer the project questions to capture context. Use Previous if you want to change an earlier answer.</p></div></li>' +
-      '<li><span>3</span><div><h3>Add requirements</h3><p>Write one requirement at a time and select Analyze requirement. Answer any clarification questions.</p></div></li>' +
-      '<li><span>4</span><div><h3>Review and approve</h3><p>Open Review &amp; approve to check translations. Edit them if needed, then approve the requirements you accept.</p></div></li>' +
-      '<li><span>5</span><div><h3>View reports</h3><p>Use Reports to find reviewed sessions that have at least one approved requirement, then open or export a report.</p></div></li>' +
+      '<li><span>1</span><div><h3>Create a project</h3><p>Add the project name and optional client name. A first session starts with it; you can add more sessions under the same project.</p></div></li>' +
+      '<li><span>2</span><div><h3>Organize sessions</h3><p>Use the + beside a project to start a separate session. Session names are optional and can be added or changed later; start date and time are saved automatically.</p></div></li>' +
+      '<li><span>3</span><div><h3>Complete discovery</h3><p>Answer the project discovery questions in its first session. Later sessions automatically reuse these answers.</p></div></li>' +
+      '<li><span>4</span><div><h3>Add requirements</h3><p>Write one requirement at a time and select Analyze requirement. Answer any clarification questions.</p></div></li>' +
+      '<li><span>5</span><div><h3>Review, approve, and report</h3><p>Check translations, edit and approve the requirements you accept, then view or export that session’s report.</p></div></li>' +
       '</ol>' +
       '<div class="help-dialog-foot"><button class="btn btn-primary" type="button" data-action="closeHelp">Got it</button></div>' +
       '</section></div>'
@@ -813,7 +864,7 @@
       '<section class="glass help-dialog completion-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title" aria-describedby="delete-warning">' +
       '<div class="help-dialog-head"><div><p class="small faint">DELETE SESSION</p>' +
       '<h2 class="display" id="delete-title">Delete this session?</h2></div></div>' +
-      '<p id="delete-warning" class="completion-warning">The session "' + esc(session.project_name) + '" will be permanently deleted, including its saved requirements and history. This action cannot be undone.</p>' +
+      '<p id="delete-warning" class="completion-warning">The session "' + esc(session.session_name || formatSessionDateTime(session.started_at)) + '" in "' + esc(session.project_name) + '" will be permanently deleted, including its saved requirements and history. This action cannot be undone.</p>' +
       (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
       '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelDelete" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
       '<button class="btn btn-primary delete-confirm-button" type="button" data-action="confirmDelete" ' + (state.busy ? "disabled" : "") + ">" + (state.busy ? "Deleting..." : "Delete Session") + "</button></div>" +
@@ -821,22 +872,92 @@
     );
   }
 
+  function deleteProjectConfirmHtml() {
+    const project = state.deleteConfirmProject;
+    if (!project) return "";
+    const count = state.sessions.filter(function (session) {
+      return session.project_id === project.project_id;
+    }).length;
+    return (
+      '<div class="help-overlay" data-action="cancelDeleteProject" data-overlay="delete-project">' +
+      '<section class="glass help-dialog completion-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" aria-describedby="delete-project-warning">' +
+      '<div class="help-dialog-head"><div><p class="small faint">DELETE PROJECT</p>' +
+      '<h2 class="display" id="delete-project-title">Delete this project?</h2></div></div>' +
+      '<p id="delete-project-warning" class="completion-warning">The project "' + esc(project.project_name) +
+      '" and all ' + plural(count, "session") + " with their requirements and reports will be permanently deleted. This cannot be undone.</p>" +
+      (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
+      '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelDeleteProject" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
+      '<button class="btn btn-primary delete-confirm-button" type="button" data-action="confirmDeleteProject" ' + (state.busy ? "disabled" : "") + ">" +
+      (state.busy ? "Deleting..." : "Delete Project") + "</button></div>" +
+      "</section></div>"
+    );
+  }
+
   function renameConfirmHtml() {
     const session = state.renameConfirmSession;
-    if (!session) return "";
+    const project = state.renameConfirmProject;
+    const target = session || project;
+    if (!target) return "";
+    const title = session ? "Rename session" : "Rename project";
     return (
       '<div class="help-overlay" data-action="cancelRename" data-overlay="rename">' +
       '<section class="glass help-dialog completion-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">' +
-      '<div class="help-dialog-head"><div><p class="small faint">RENAME SESSION</p>' +
-      '<h2 class="display" id="rename-title">Rename this session</h2></div></div>' +
-      '<label class="completion-warning label" for="rename-project-name">Session name' +
+      '<div class="help-dialog-head"><div><p class="small faint">' + (session ? "RENAME SESSION" : "RENAME PROJECT") + "</p>" +
+      '<h2 class="display" id="rename-title">' + title + '</h2></div></div>' +
+      '<label class="completion-warning label" for="rename-project-name">' + (session ? "Session name (optional)" : "Project name") +
       '<input class="field" id="rename-project-name" data-model="renameProjectName" type="text" maxlength="120" ' +
-      'value="' + esc(state.renameProjectName) + '" required></label>' +
+      'value="' + esc(state.renameProjectName) + '"></label>' +
       (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
       '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelRename" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
       '<button class="btn btn-primary" type="button" data-action="confirmRename" ' +
-      (state.busy || !state.renameProjectName.trim() ? "disabled" : "") + ">" +
+      (state.busy || (!session && !state.renameProjectName.trim()) ? "disabled" : "") + ">" +
       (state.busy ? "Saving..." : "Save") + "</button></div>" +
+      "</section></div>"
+    );
+  }
+
+  function createSessionHtml() {
+    const project = state.projects.find(function (item) {
+      return item.project_id === state.createSessionProjectId;
+    });
+    if (!project) return "";
+    return (
+      '<div class="help-overlay" data-action="cancelCreateSession" data-overlay="create-session">' +
+      '<section class="glass help-dialog completion-dialog" role="dialog" aria-modal="true" aria-labelledby="create-session-title">' +
+      '<div class="help-dialog-head"><div><p class="small faint">NEW SESSION · ' + esc(project.project_name.toUpperCase()) + '</p>' +
+      '<h2 class="display" id="create-session-title">Start a session</h2></div></div>' +
+      '<p class="completion-warning">This session inherits discovery answers from the project’s first session and keeps its own requirements and report. The start date and time are saved automatically.</p>' +
+      '<label class="label" for="new-session-name">Session name (optional)' +
+      '<input class="field" id="new-session-name" data-model="sessionName" maxlength="120" autocomplete="off" ' +
+      'placeholder="e.g. Initial requirements workshop" value="' + esc(state.sessionName) + '"></label>' +
+      (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
+      '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelCreateSession" ' + (state.busy ? "disabled" : "") + ">Cancel</button>" +
+      '<button class="btn btn-primary" type="button" data-action="confirmCreateSession" ' + (state.busy ? "disabled" : "") + ">" +
+      (state.busy ? "Starting..." : "Start session") + "</button></div>" +
+      "</section></div>"
+    );
+  }
+
+  function createProjectHtml() {
+    if (!state.createProjectOpen) return "";
+    return (
+      '<div class="help-overlay" data-action="cancelCreateProject" data-overlay="create-project">' +
+      '<section class="glass help-dialog completion-dialog" role="dialog" aria-modal="true" aria-labelledby="create-project-title">' +
+      '<div class="help-dialog-head"><div><p class="small faint">NEW PROJECT</p>' +
+      '<h2 class="display" id="create-project-title">Create a project</h2></div></div>' +
+      '<form class="project-create-form" data-form="createProject">' +
+      '<label class="label" for="project-name">Project name' +
+      '<input class="field" id="project-name" data-model="projectName" maxlength="120" required autocomplete="off" value="' + esc(state.projectName) + '"></label>' +
+      '<label class="label" for="client-name">Client name (optional)' +
+      '<input class="field" id="client-name" data-model="clientName" autocomplete="organization" value="' + esc(state.clientName) + '"></label>' +
+      '<label class="label" for="first-session-name">First session name (optional)' +
+      '<input class="field" id="first-session-name" data-model="sessionName" maxlength="120" autocomplete="off" value="' + esc(state.sessionName) + '"></label>' +
+      '<p class="small muted">Creates the project and its first guided session. You can name the session now or later.</p>' +
+      (state.error ? '<p class="banner banner-error" role="alert">' + esc(state.error) + "</p>" : "") +
+      '<div class="completion-actions"><button class="btn btn-ghost" type="button" data-action="cancelCreateProject" ' + (state.creating ? "disabled" : "") + ">Cancel</button>" +
+      '<button class="btn btn-primary" id="start-btn" type="submit" ' +
+      (state.creating || !state.projectName.trim() ? "disabled" : "") + ">" +
+      (state.creating ? "Creating..." : "Create project") + "</button></div></form>" +
       "</section></div>"
     );
   }
@@ -856,7 +977,11 @@
     }
     return (
       '<div class="page"><header class="page-head"><h1 class="display">' + pageTitles[state.workflow] + "</h1><p>" +
-      esc(state.workflow === "reports" ? "Reviewed sessions with approved requirements" : sel ? sel.project_name : "Project workspace") + "</p></header>" +
+      esc(state.workflow === "reports"
+        ? "All session reports, grouped by project"
+        : sel
+          ? sel.project_name + " · " + (sel.session_name || formatSessionDateTime(sel.started_at))
+          : "Project workspace") + "</p></header>" +
       messagesHtml() + body + "</div>"
     );
   }
@@ -874,7 +999,11 @@
       (state.helpOpen ? helpGuideHtml() : "") +
       (state.completeConfirmOpen ? completeConfirmHtml() : "") +
       (state.deleteConfirmSession ? deleteConfirmHtml() : "") +
+      (state.deleteConfirmProject ? deleteProjectConfirmHtml() : "") +
       (state.renameConfirmSession ? renameConfirmHtml() : "") +
+      (state.renameConfirmProject ? renameConfirmHtml() : "") +
+      (state.createProjectOpen ? createProjectHtml() : "") +
+      (state.createSessionProjectId ? createSessionHtml() : "") +
       "</main></div>"
     );
   }
@@ -926,8 +1055,14 @@
 
   async function loadSessions() {
     try {
-      const items = await api("/sessions");
-      state.sessions = items;
+      const results = await Promise.all([api("/projects"), api("/sessions")]);
+      state.projects = results[0];
+      state.sessions = results[1];
+      state.projects.forEach(function (project) {
+        if (!Object.prototype.hasOwnProperty.call(state.expandedProjects, project.project_id)) {
+          state.expandedProjects[project.project_id] = true;
+        }
+      });
     } catch (error) {
       state.error = error.message;
     } finally {
@@ -936,27 +1071,94 @@
     }
   }
 
-  async function createSession() {
+  async function createProject() {
     const name = state.projectName.trim();
     if (!name || state.creating) return;
     const clientName = state.clientName.trim();
+    const firstSessionName = state.sessionName.trim();
     state.creating = true;
     clearMessages();
     render();
     try {
-      const result = await api("/sessions", { method: "POST", body: JSON.stringify({ project_name: name, client_name: clientName || null }) });
+      const project = await api("/projects", {
+        method: "POST",
+        body: JSON.stringify({ project_name: name, client_name: clientName || null }),
+      });
+      state.projects.unshift(project);
+      state.expandedProjects[project.project_id] = true;
+      const result = await api("/projects/" + project.project_id + "/sessions", {
+        method: "POST",
+        body: JSON.stringify({ session_name: firstSessionName || null }),
+      });
       state.projectName = "";
       state.clientName = "";
+      state.sessionName = "";
       state.selectedId = result.session_id;
-      state.sessions.unshift({ session_id: result.session_id, project_name: result.project_name, client_name: result.client_name, started_at: result.started_at, status: "active", requirement_count: 0, translated_count: 0, approved_count: 0 });
-      state.discoveryAnswers = [];
-      state.discoveryIndex = 0;
+      state.createProjectOpen = false;
+      state.sessions.unshift(Object.assign({}, result, {
+        status: "active",
+        requirement_count: 0,
+        translated_count: 0,
+        approved_count: 0,
+      }));
+      project.session_count = 1;
       state.sidebarOpen = false;
-      state.workflow = "discovery";
+      state.discoveryAnswers = result.discovery_answers || [];
+      state.discoveryIndex = state.discoveryAnswers.length;
+      state.workflow = result.discovery_required === false ? "input" : "discovery";
+    } catch (error) {
+      state.error = error.message;
+      state.workflow = "dashboard";
+      if (state.projects.length) loadSessions();
+    } finally {
+      state.creating = false;
+      go(state.workflow);
+    }
+  }
+
+  function requestCreateSession(projectId) {
+    if (!projectId || state.busy || state.creating) return;
+    state.createSessionProjectId = projectId;
+    state.sessionName = "";
+    state.openProjectMenuId = null;
+    clearMessages();
+    state.focusId = "new-session-name";
+    render();
+  }
+
+  async function createProjectSession() {
+    const projectId = state.createSessionProjectId;
+    if (!projectId || state.busy) return;
+    state.busy = true;
+    clearMessages();
+    render();
+    try {
+      const result = await api("/projects/" + projectId + "/sessions", {
+        method: "POST",
+        body: JSON.stringify({ session_name: state.sessionName.trim() || null }),
+      });
+      state.sessions.unshift(Object.assign({}, result, {
+        status: "active",
+        requirement_count: 0,
+        translated_count: 0,
+        approved_count: 0,
+      }));
+      const project = state.projects.find(function (item) {
+        return item.project_id === projectId;
+      });
+      if (project) project.session_count += 1;
+      state.expandedProjects[projectId] = true;
+      state.selectedId = result.session_id;
+      state.createSessionProjectId = null;
+      state.sessionName = "";
+      state.sidebarOpen = false;
+      state.discoveryAnswers = result.discovery_answers || [];
+      state.discoveryIndex = state.discoveryAnswers.length;
+      state.workflow = result.discovery_required === false ? "input" : "discovery";
     } catch (error) {
       state.error = error.message;
     } finally {
-      state.creating = false;
+      state.busy = false;
       go(state.workflow);
     }
   }
@@ -965,6 +1167,8 @@
     state.selectedId = sessionId;
     state.requirementText = "";
     state.requirementId = null;
+    state.discoveryAnswers = [];
+    state.discoveryIndex = 0;
     state.ambiguities = [];
     state.qIndex = 0;
     state.answers = {};
@@ -978,6 +1182,35 @@
     go(screen || "input");
   }
 
+  async function continueSession() {
+    const session = selectedSession();
+    if (!session || state.busy) return;
+    if (isCompleted(session)) {
+      showReport();
+      return;
+    }
+
+    state.busy = true;
+    clearMessages();
+    render();
+    try {
+      const result = await api("/sessions/" + session.session_id + "/discovery");
+      state.discoveryAnswers = result.answers || [];
+      state.discoveryIndex = state.discoveryAnswers.length;
+      state.workflow = result.discovery_required !== false &&
+        state.discoveryAnswers.length < discoveryQuestions.length &&
+        !session.requirement_count
+        ? "discovery"
+        : "input";
+    } catch (error) {
+      state.error = error.message;
+      state.workflow = "dashboard";
+    } finally {
+      state.busy = false;
+      go(state.workflow);
+    }
+  }
+
   async function saveDiscoveryAnswer(answer) {
     if (state.busy || !state.selectedId || isCompleted(selectedSession())) return;
     state.busy = true;
@@ -986,12 +1219,14 @@
     const question = discoveryQuestions[state.discoveryIndex];
     const next = state.discoveryAnswers.concat([{ question: question.question, answer: answer }]);
     try {
+      await api("/sessions/" + state.selectedId + "/discovery", {
+        method: "POST",
+        body: JSON.stringify({ answers: next }),
+      });
+      state.discoveryAnswers = next;
       if (state.discoveryIndex === discoveryQuestions.length - 1) {
-        await api("/sessions/" + state.selectedId + "/discovery", { method: "POST", body: JSON.stringify({ answers: next }) });
-        state.discoveryAnswers = next;
         state.workflow = "input";
       } else {
-        state.discoveryAnswers = next;
         state.discoveryIndex += 1;
       }
     } catch (error) {
@@ -1029,6 +1264,10 @@
       state.sessions = state.sessions.filter(function (s) {
         return s.session_id !== id;
       });
+      const project = state.projects.find(function (item) {
+        return item.project_id === session.project_id;
+      });
+      if (project) project.session_count = Math.max(0, project.session_count - 1);
       state.deleteConfirmSession = null;
 
       if (state.selectedId === id) {
@@ -1053,31 +1292,101 @@
     }
   }
 
+  function requestDeleteProject(id) {
+    const project = state.projects.find(function (item) {
+      return item.project_id === id;
+    });
+    if (!project || state.busy) return;
+    clearMessages();
+    state.openProjectMenuId = null;
+    state.deleteConfirmProject = project;
+    render();
+  }
+
+  async function deleteProject() {
+    const project = state.deleteConfirmProject;
+    if (!project || state.busy) return;
+    const projectId = project.project_id;
+    state.busy = true;
+    clearMessages();
+    render();
+    try {
+      await api("/projects/" + projectId, { method: "DELETE" });
+      const removedIds = state.sessions.filter(function (session) {
+        return session.project_id === projectId;
+      }).map(function (session) { return session.session_id; });
+      state.sessions = state.sessions.filter(function (session) {
+        return session.project_id !== projectId;
+      });
+      state.projects = state.projects.filter(function (item) {
+        return item.project_id !== projectId;
+      });
+      state.deleteConfirmProject = null;
+      if (removedIds.indexOf(state.selectedId) >= 0) {
+        state.selectedId = state.sessions.length ? state.sessions[0].session_id : null;
+        state.workflow = "dashboard";
+        state.report = null;
+        state.requirementText = "";
+        state.requirementId = null;
+        state.ambiguities = [];
+        state.answers = {};
+      }
+      state.notice = "Project and its sessions deleted successfully.";
+    } catch (error) {
+      state.error = error.message;
+    } finally {
+      state.busy = false;
+      render();
+    }
+  }
+
   function requestRenameSession(id) {
     const session = state.sessions.find(function (item) {
       return item.session_id === id;
     });
-    if (!session || state.busy || isCompleted(session)) return;
+    if (!session || state.busy) return;
     clearMessages();
     state.openSessionMenuId = null;
+    state.renameConfirmProject = null;
     state.renameConfirmSession = session;
-    state.renameProjectName = session.project_name;
+    state.renameProjectName = session.session_name || "";
     state.focusId = "rename-project-name";
     render();
   }
 
-  async function renameSession() {
+  function requestRenameProject(id) {
+    const project = state.projects.find(function (item) {
+      return item.project_id === id;
+    });
+    if (!project || state.busy) return;
+    clearMessages();
+    state.openProjectMenuId = null;
+    state.renameConfirmSession = null;
+    state.renameConfirmProject = project;
+    state.renameProjectName = project.project_name;
+    state.focusId = "rename-project-name";
+    render();
+  }
+
+  async function renameItem() {
     const session = state.renameConfirmSession;
-    if (!session || state.busy) return;
-    const id = session.session_id;
-    const projectName = state.renameProjectName.trim();
-    if (!projectName || projectName.length > 120) {
-      state.error = "Project name must be 1-120 characters.";
+    const project = state.renameConfirmProject;
+    const target = session || project;
+    if (!target || state.busy) return;
+    const name = state.renameProjectName.trim();
+    if (!session && !name) {
+      state.error = "Project name cannot be empty.";
       render();
       return;
     }
-    if (projectName === session.project_name) {
+    if (name.length > 120) {
+      state.error = "Name must be at most 120 characters.";
+      render();
+      return;
+    }
+    if (name === (session ? (session.session_name || "") : project.project_name)) {
       state.renameConfirmSession = null;
+      state.renameConfirmProject = null;
       state.renameProjectName = "";
       render();
       return;
@@ -1087,20 +1396,31 @@
     clearMessages();
     render();
     try {
-      const result = await api("/sessions/" + id, {
+      const id = session ? session.session_id : project.project_id;
+      const result = await api((session ? "/sessions/" : "/projects/") + id, {
         method: "PATCH",
-        body: JSON.stringify({ project_name: projectName }),
-      });
-      state.sessions = state.sessions.map(function (item) {
-        return item.session_id === id
-          ? Object.assign({}, item, { project_name: result.project_name })
-          : item;
+        body: JSON.stringify(session
+          ? { session_name: name || null }
+          : { project_name: name }),
       });
       state.renameConfirmSession = null;
-      if (state.report && state.report.session_id === id) {
-        state.report.project_name = result.project_name;
+      state.renameConfirmProject = null;
+      state.renameProjectName = "";
+      if (session) {
+        session.session_name = result.session_name;
+        if (state.report && state.report.session_id === id) {
+          state.report.session_name = result.session_name;
+        }
+      } else {
+        project.project_name = result.project_name;
+        state.sessions.forEach(function (item) {
+          if (item.project_id === id) item.project_name = result.project_name;
+        });
+        if (state.report && state.report.project_id === id) {
+          state.report.project_name = result.project_name;
+        }
       }
-      state.notice = "Session renamed successfully.";
+      state.notice = session ? "Session name updated." : "Project renamed successfully.";
     } catch (error) {
       state.error = error.message;
     } finally {
@@ -1415,12 +1735,50 @@
     deleteSession: function (data) {
       requestDeleteSession(Number(data.id));
     },
+    deleteProject: function (data) {
+      requestDeleteProject(Number(data.id));
+    },
+    confirmDeleteProject: function () {
+      deleteProject();
+    },
+    cancelDeleteProject: function () {
+      if (state.busy) return;
+      state.deleteConfirmProject = null;
+      clearMessages();
+      render();
+    },
     renameSession: function (data) {
       requestRenameSession(Number(data.id));
+    },
+    renameProject: function (data) {
+      requestRenameProject(Number(data.id));
+    },
+    toggleProject: function (data) {
+      const id = Number(data.id);
+      state.expandedProjects[id] = state.expandedProjects[id] === false;
+      render();
+    },
+    toggleProjectMenu: function (data) {
+      const id = Number(data.id);
+      state.openProjectMenuId = state.openProjectMenuId === id ? null : id;
+      render();
     },
     toggleSessionMenu: function (data) {
       const id = Number(data.id);
       state.openSessionMenuId = state.openSessionMenuId === id ? null : id;
+      render();
+    },
+    createProjectSession: function (data) {
+      requestCreateSession(Number(data.id));
+    },
+    confirmCreateSession: function () {
+      createProjectSession();
+    },
+    cancelCreateSession: function () {
+      if (state.busy) return;
+      state.createSessionProjectId = null;
+      state.sessionName = "";
+      clearMessages();
       render();
     },
     confirmDelete: function () {
@@ -1434,20 +1792,34 @@
     cancelRename: function () {
       if (state.busy) return;
       state.renameConfirmSession = null;
+      state.renameConfirmProject = null;
       state.renameProjectName = "";
       clearMessages();
       render();
     },
     confirmRename: function () {
-      renameSession();
+      renameItem();
     },
 
-    newSession: function () {
+    newProject: function () {
       clearMessages();
       state.selectedId = null;
+      state.projectName = "";
+      state.clientName = "";
+      state.sessionName = "";
       state.sidebarOpen = true;
+      state.createProjectOpen = true;
       state.focusId = "project-name";
       go("dashboard");
+    },
+    cancelCreateProject: function () {
+      if (state.creating) return;
+      state.createProjectOpen = false;
+      state.projectName = "";
+      state.clientName = "";
+      state.sessionName = "";
+      clearMessages();
+      render();
     },
     focusProject: function () {
       const input = document.getElementById("project-name");
@@ -1484,8 +1856,7 @@
     showReport: function () { showReport(); },
     openSession: function (data) { startSession(Number(data.id), "dashboard"); },
     continueSession: function () {
-      if (isCompleted(selectedSession())) showReport();
-      else startSession(state.selectedId, "input");
+      continueSession();
     },
     openCompleteConfirm: function () {
       if (isCompleted(state.report) || isCompleted(selectedSession())) return;
@@ -1498,30 +1869,40 @@
     },
     confirmComplete: function () { completeSelectedSession(); },
     starter: function (data) {
-      const input = document.getElementById("project-name");
       state.projectName = starters[Number(data.index)].title;
-      if (input) {
-        input.value = state.projectName;
-        input.focus();
-      }
-      updateStartButton();
+      state.clientName = "";
+      state.sessionName = "";
+      state.createProjectOpen = true;
+      state.focusId = "project-name";
+      clearMessages();
+      render();
     },
     discoveryAnswer: function (data) {
       saveDiscoveryAnswer(discoveryQuestions[state.discoveryIndex].options[Number(data.index)]);
     },
     
-    discoveryPrevious: function () {
+    discoveryPrevious: async function () {
       if (state.busy || state.discoveryIndex <= 0) return;
-    
-      state.discoveryIndex -= 1;
-      state.discoveryAnswers = state.discoveryAnswers.slice(
-        0,
-        state.discoveryIndex
-      );
-    
+      state.busy = true;
       clearMessages();
       render();
+      const nextIndex = state.discoveryIndex - 1;
+      const next = state.discoveryAnswers.slice(0, nextIndex);
+      try {
+        await api("/sessions/" + state.selectedId + "/discovery", {
+          method: "POST",
+          body: JSON.stringify({ answers: next }),
+        });
+        state.discoveryIndex = nextIndex;
+        state.discoveryAnswers = next;
+      } catch (error) {
+        state.error = error.message;
+      } finally {
+        state.busy = false;
+      }
+      render();
     },
+    discoverySkip: function () { saveDiscoveryAnswer(""); },
     
     finish: function () { showReport(); },
     answerOption: function (data) {
@@ -1564,6 +1945,7 @@
       updateStartButton();
     },
     clientName: function (v) { state.clientName = v; },
+    sessionName: function (v) { state.sessionName = v; },
     search: function (v) {
       state.search = v;
       const list = $("#session-list");
@@ -1572,7 +1954,7 @@
     renameProjectName: function (v) {
       state.renameProjectName = v;
       const button = $('[data-action="confirmRename"]');
-      if (button) button.disabled = state.busy || !v.trim();
+      if (button) button.disabled = state.busy || (Boolean(state.renameConfirmProject) && !v.trim());
     },
     requirementText: function (v) {
       state.requirementText = v;
@@ -1593,19 +1975,27 @@
 
   const forms = {
     auth: submitAuth,
-    createSession: createSession,
+    createProject: createProject,
     analyze: analyzeRequirement,
   };
 
   app.addEventListener("click", function (event) {
     const el = event.target.closest("[data-action]");
     const clickedSessionMenu = event.target.closest(".session-menu, .session-menu-toggle");
+    const clickedProjectMenu = event.target.closest(".project-menu, .project-menu-toggle");
     if (state.openSessionMenuId !== null && !clickedSessionMenu) {
       state.openSessionMenuId = null;
       if (!el) render();
     }
+    if (state.openProjectMenuId !== null && !clickedProjectMenu) {
+      state.openProjectMenuId = null;
+      if (!el) render();
+    }
     if (!el || el.disabled) return;
-    if ((el.dataset.overlay === "delete" || el.dataset.overlay === "rename") && event.target !== el) return;
+    if ((el.dataset.overlay === "delete" || el.dataset.overlay === "rename" ||
+      el.dataset.overlay === "delete-project" || el.dataset.overlay === "create-session" ||
+      el.dataset.overlay === "create-project") &&
+      event.target !== el) return;
     const handler = actions[el.dataset.action];
     if (handler) handler(el.dataset);
   });
@@ -1646,11 +2036,20 @@
       return;
     }
 
-    if (event.key === "Escape" && (state.helpOpen || state.completeConfirmOpen || state.deleteConfirmSession)) {
+    if (event.key === "Escape" && (state.helpOpen || state.completeConfirmOpen ||
+      state.deleteConfirmSession || state.deleteConfirmProject || state.renameConfirmSession ||
+      state.renameConfirmProject || state.createSessionProjectId)) {
       if (state.busy) return;
       state.helpOpen = false;
       state.completeConfirmOpen = false;
       state.deleteConfirmSession = null;
+      state.deleteConfirmProject = null;
+      state.renameConfirmSession = null;
+      state.renameConfirmProject = null;
+      state.renameProjectName = "";
+      state.createSessionProjectId = null;
+      state.sessionName = "";
+      clearMessages();
       render();
       return;
     }

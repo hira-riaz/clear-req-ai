@@ -49,3 +49,63 @@ def migrate_legacy_user_auth():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_supabase_user_id "
             "ON users (supabase_user_id)"
         ))
+
+
+def migrate_session_name():
+    """Add an optional name to existing and new sessions."""
+    columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+    if "name" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE sessions ADD COLUMN name VARCHAR(120)"))
+
+
+def migrate_session_discovery():
+    """Keep discovery on the first project session and inherit it in later sessions."""
+    columns = {column["name"] for column in inspect(engine).get_columns("sessions")}
+    if "discovery_required" in columns:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE sessions ADD COLUMN discovery_required BOOLEAN NOT NULL DEFAULT TRUE"
+        ))
+        rows = connection.execute(text(
+            "SELECT id, project_id FROM sessions ORDER BY project_id, id"
+        )).mappings().all()
+        sessions_by_project = {}
+        for row in rows:
+            sessions_by_project.setdefault(row["project_id"], []).append(row["id"])
+
+        for session_ids in sessions_by_project.values():
+            if len(session_ids) < 2:
+                continue
+            first_answers = connection.execute(
+                text(
+                    "SELECT question, answer, answered_at FROM discovery_answers "
+                    "WHERE session_id = :session_id ORDER BY id"
+                ),
+                {"session_id": session_ids[0]},
+            ).mappings().all()
+            for session_id in session_ids[1:]:
+                connection.execute(
+                    text("UPDATE sessions SET discovery_required = FALSE WHERE id = :session_id"),
+                    {"session_id": session_id},
+                )
+                connection.execute(
+                    text("DELETE FROM discovery_answers WHERE session_id = :session_id"),
+                    {"session_id": session_id},
+                )
+                for answer in first_answers:
+                    connection.execute(
+                        text(
+                            "INSERT INTO discovery_answers "
+                            "(session_id, question, answer, answered_at) "
+                            "VALUES (:session_id, :question, :answer, :answered_at)"
+                        ),
+                        {
+                            "session_id": session_id,
+                            "question": answer["question"],
+                            "answer": answer["answer"],
+                            "answered_at": answer["answered_at"],
+                        },
+                    )

@@ -1,6 +1,6 @@
 """ORM models. Versioned by design: a Requirement can have many RequirementVersions."""
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Float, ForeignKey, DateTime
+from sqlalchemy import Boolean, Column, Integer, String, Text, Float, ForeignKey, DateTime, text
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -29,6 +29,8 @@ class Session(Base):
     __tablename__ = "sessions"
     id = Column(Integer, primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"))
+    name = Column(String(120), nullable=True)
+    discovery_required = Column(Boolean, nullable=False, default=True, server_default=text("TRUE"))
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
 

@@ -877,6 +877,166 @@ button.nav-item:hover:not(:disabled) {
   align-content: start;
   gap: 2px;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.session-list::-webkit-scrollbar {
+  display: none;
+}
+
+.project-group {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 8px;
+}
+
+.project-row:hover {
+  background: var(--tint);
+}
+
+.project-row.menu-open {
+  z-index: 2;
+}
+
+.project-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 8px 4px;
+  text-align: left;
+}
+
+.project-caret {
+  width: 14px;
+  flex-shrink: 0;
+  color: var(--faint);
+  text-align: center;
+}
+
+.project-heading {
+  display: block;
+  min-width: 0;
+}
+
+.project-heading .name,
+.project-heading .meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-heading .name {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.project-heading .meta {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.project-add-session,
+.project-menu-toggle {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-row:hover .project-add-session,
+.project-row:focus-within .project-add-session,
+.project-row:hover .project-menu-toggle,
+.project-row:focus-within .project-menu-toggle,
+.project-row.menu-open .project-menu-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-add-session {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.project-menu-toggle .icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.4;
+}
+
+.project-add-session:hover,
+.project-menu-toggle:hover {
+  background: rgba(31, 27, 24, 0.08);
+  color: var(--ink);
+}
+
+.project-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 4px;
+  z-index: 3;
+  width: 150px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(31, 27, 24, 0.14);
+}
+
+.project-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--ink);
+  text-align: left;
+  font-size: 13px;
+}
+
+.project-menu button:hover {
+  background: var(--tint);
+}
+
+.project-sessions {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin-left: 18px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+
+.project-empty {
+  padding: 5px 8px;
+  font-size: 12px;
 }
 
 .session-item {
@@ -893,6 +1053,7 @@ button.nav-item:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 
 .session-row.menu-open {
@@ -988,14 +1149,64 @@ button.nav-item:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+.project-intro {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+}
+
+.project-intro .display {
+  font-size: 24px;
+}
+
+.project-intro p:not(.small) {
+  max-width: 620px;
+  line-height: 1.65;
+}
+
+.project-create-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.report-project-group {
+  margin-top: 20px;
+}
+
+.report-project-group + .report-project-group {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.report-project-head {
+  align-items: baseline;
+  gap: 12px;
+}
+
+.report-project-head h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.report-session-card {
+  margin-top: 10px;
+  padding: 16px 18px;
+}
+
+.report-session-card h4 {
+  margin: 0;
+  font-size: 16px;
+}
+
 .session-item .name {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .session-item .meta {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--faint);
 }
 
@@ -1847,6 +2058,15 @@ button.nav-item:hover:not(:disabled) {
   .site-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+@media (hover: none) {
+  .project-add-session,
+  .project-menu-toggle,
+  .session-menu-toggle {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
